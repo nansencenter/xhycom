@@ -8,12 +8,10 @@ dependencies:
   - xarray
   - cftime
   - sphinx
-  - sphinx_rtd_theme
-  - myst-parser
-  - sphinx-copybutton
+  - sphinx-book-theme
   - myst-nb
+  - sphinx-copybutton
   - jupyter
   - pip
   - pip:
-      - furo          # optional: change html_theme in conf.py to "furo"
       - -e ..         # install xhycom itself in editable mode

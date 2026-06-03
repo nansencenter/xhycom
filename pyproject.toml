@@ -21,11 +21,9 @@ lazy = ["dask"]
 dev = ["pytest", "pytest-cov"]
 docs = [
     "sphinx",
-    "sphinx-rtd-theme",
-    "myst-parser",
-    "sphinx-copybutton",
+    "sphinx-book-theme",
     "myst-nb",
-    "furo",
+    "sphinx-copybutton",
 ]
 
 [project.urls]
