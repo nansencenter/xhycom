@@ -106,27 +106,50 @@ def detect_filetype(basename):
 
 
 # ---------------------------------------------------------------------------
+# Lazy-loading helper (module-level so Dask can serialise it)
+# ---------------------------------------------------------------------------
+
+def _read_field_lazy(basename, fname, level, endian):
+    """Open the archive and read one 2-D field slice.
+
+    This function is called by Dask tasks; it must live at module level so
+    that Dask can serialise it across workers.
+    """
+    af = ABFileArchv(basename, "r", endian=endian)
+    raw = af.read_field(fname, level)
+    af.close()
+    return _fill(raw)
+
+
+# ---------------------------------------------------------------------------
 # Per-type readers (internal)
 # ---------------------------------------------------------------------------
 
-def read_archv(basename, grid_ds=None, endian="big"):
-    """Read a HYCOM archive ``.ab`` file pair into an ``xr.Dataset``."""
+def read_archv(basename, grid_ds=None, endian="big", chunks=None):
+    """Read a HYCOM archive ``.ab`` file pair into an ``xr.Dataset``.
+
+    Parameters
+    ----------
+    chunks : int, dict, "auto", or None
+        If not ``None``, field data are read lazily via Dask — the ``.a``
+        file is not touched until the returned Dataset is computed.
+        The value is forwarded to ``ds.chunk()`` to set chunk boundaries
+        (e.g. ``{"k": 1}`` for one layer per chunk).
+    """
     af = ABFileArchv(basename, "r", endian=endian)
 
     field_kdens = defaultdict(dict)
     for rec in af.fields.values():
         field_kdens[rec["field"]][rec["k"]] = rec["dens"]
 
+    jdm, idm = af.jdm, af.idm
     yrflag = af.yrflag
     first_rec = next(iter(af.fields.values())) if af.fields else {}
     model_day = first_rec.get("day")
     global_attrs = {"iversn": af.iversn, "iexpt": af.iexpt, "yrflag": yrflag}
 
-    # Build the k→dens mapping for the layer-centre 'k' coordinate.
-    # Interface variables (k=0..N) are excluded — they sit on 'ki', not 'k'.
-    # Pass 1: union from all centre variables to cover every k value.
-    # Pass 2: override with T-point values (dens is defined at the tracer
-    # point; U/V-point values are averages of neighbouring cells).
+    # k→dens for layer-centre variables only (interfaces sit on 'ki', not 'k').
+    # Pass 1: union from all centre vars. Pass 2: prefer T-point values.
     global_kdens = {}
     for fname, kdens in field_kdens.items():
         if len(kdens) > 1 and 0 not in kdens:
@@ -136,27 +159,60 @@ def read_archv(basename, grid_ds=None, endian="big"):
             global_kdens.update(field_kdens[fname])
             break
 
+    if chunks is not None:
+        # Lazy path: .b header is parsed above (cheap text read); close the
+        # file now.  Each 2-D slab is wrapped in a Dask delayed so the .a
+        # binary data is only read when the array is computed.
+        af.close()
+        try:
+            import dask
+            import dask.array as da
+        except ImportError:
+            raise ImportError(
+                "Dask is required for lazy/chunked loading. "
+                "Install it with: pip install dask"
+            )
+
+        def _get_slab(fname, k):
+            return da.from_delayed(
+                dask.delayed(_read_field_lazy)(basename, fname, k, endian),
+                shape=(jdm, idm),
+                dtype=np.float64,
+            )
+
+        def _stack(slabs):
+            return da.stack(slabs, axis=0)
+
+    else:
+        # Eager path: file is open, read all data directly.
+        def _get_slab(fname, k):
+            return _fill(af.read_field(fname, k))
+
+        def _stack(slabs):
+            return np.stack(slabs)
+
     data_vars = {}
     for fname, kdens in field_kdens.items():
         levels = sorted(kdens)
         h_coords = _h_coords(fname, grid_ds)
         if len(levels) == 1:
-            raw = af.read_field(fname, levels[0])
             data_vars[fname] = xr.DataArray(
-                _fill(raw), dims=["y", "x"],
+                _get_slab(fname, levels[0]), dims=["y", "x"],
                 coords=h_coords, name=fname,
             )
         else:
             vdim = _v_dim(levels)
-            stack = np.stack([_fill(af.read_field(fname, k)) for k in levels])
+            arr = _stack([_get_slab(fname, k) for k in levels])
             coords = dict(h_coords)
             coords[vdim] = (vdim, levels)
             data_vars[fname] = xr.DataArray(
-                stack, dims=[vdim, "y", "x"],
+                arr, dims=[vdim, "y", "x"],
                 coords=coords, name=fname,
             )
 
-    af.close()
+    if chunks is None:
+        af.close()
+
     ds = xr.Dataset(data_vars, attrs=global_attrs)
 
     if global_kdens:
@@ -166,6 +222,9 @@ def read_archv(basename, grid_ds=None, endian="big"):
     if model_day is not None and yrflag is not None:
         t = model_day_to_datetime(model_day, yrflag)
         ds = ds.expand_dims({"time": [t]})
+
+    if chunks is not None:
+        ds = ds.chunk(chunks)
 
     return ds
 

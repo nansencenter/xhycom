@@ -26,16 +26,21 @@ def _load_grid(grid, endian):
     return open_dataset(grid, endian=endian)
 
 
-def open_dataset(path, grid=None, endian="big"):
+def open_dataset(path, grid=None, endian="big", chunks=None):
     """Open a HYCOM ``.ab`` file pair as an ``xr.Dataset``.
 
     Automatically detects the file type (archive, grid, or bathymetry) from
     the ``.b`` header, so the same function works for all HYCOM output files.
 
+    If *path* is a glob pattern or directory, it is forwarded to
+    :func:`open_mfdataset` automatically.
+
     Parameters
     ----------
     path : str
         Path to the file.  The ``.a`` / ``.b`` extension is optional.
+        Glob patterns (``*``, ``?``, ``[``) and directory paths are forwarded
+        to :func:`open_mfdataset`.
     grid : str or xr.Dataset, optional
         Path to ``regional.grid`` (without extension), or a Dataset already
         returned by a previous ``open_dataset`` call on a grid file.
@@ -48,6 +53,10 @@ def open_dataset(path, grid=None, endian="big"):
 
     endian : str
         Byte order: ``"big"`` (default), ``"little"``, or ``"native"``.
+    chunks : int, dict, or "auto", optional
+        If provided, the returned Dataset is chunked with Dask.  Passed
+        directly to ``ds.chunk()``.  Example: ``chunks={"k": 1}`` to chunk
+        one layer at a time.
 
     Returns
     -------
@@ -101,30 +110,39 @@ def open_dataset(path, grid=None, endian="big"):
     >>> bathy = xhycom.open_dataset("topo/depth_TP2a0.10_04", grid=grid)
     >>> ds    = xhycom.open_dataset("data/archv.2020_001_00", grid=grid)
     """
-    basename = ABFile.strip_ab_ending(str(path))
-    filetype = detect_filetype(basename)
+    path = str(path)
 
-    if filetype == "grid":
-        return read_grid(basename, endian=endian)
+    # Forward globs and directories to open_mfdataset.
+    import os as _os
+    if any(c in path for c in "*?[") or _os.path.isdir(path):
+        return open_mfdataset(path, grid=grid, endian=endian, chunks=chunks)
+
+    basename = ABFile.strip_ab_ending(path)
+    filetype = detect_filetype(basename)
 
     grid_ds = _load_grid(grid, endian)
 
-    if filetype == "archv":
-        return read_archv(basename, grid_ds=grid_ds, endian=endian)
-
-    if filetype == "bathy":
+    if filetype == "grid":
+        ds = read_grid(basename, endian=endian)
+    elif filetype == "archv":
+        # chunks is handled inside read_archv: data is never loaded eagerly
+        # when chunks is set — Dask tasks are created instead.
+        return read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks)
+    elif filetype == "bathy":
         if grid_ds is None:
             raise ValueError(
                 "grid= is required to open a bathymetry file — it provides "
                 "the grid dimensions (idm, jdm) and lon/lat coordinates.\n"
                 "Example: open_dataset('depth_...', grid='regional.grid')"
             )
-        return read_bathy(basename, grid_ds=grid_ds, endian=endian)
+        ds = read_bathy(basename, grid_ds=grid_ds, endian=endian)
+    else:
+        raise ValueError(f"Unsupported file type {filetype!r} for open_dataset.")
 
-    raise ValueError(f"Unsupported file type {filetype!r} for open_dataset.")
+    return ds.chunk(chunks) if chunks is not None else ds
 
 
-def open_mfdataset(paths, grid=None, endian="big", skip_errors=False):
+def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=None):
     """Open multiple HYCOM archive ``.ab`` file pairs as a single ``xr.Dataset``.
 
     Snapshots are concatenated along a ``time`` dimension in chronological
@@ -135,9 +153,9 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False):
     paths : str or list of str
         One of:
 
-        * A directory path — all ``archv.YYYY_DDD_HH.[ab]`` pairs found
-          inside are used.
-        * A glob pattern such as ``"data/archv.2020_*.a"``.
+        * A directory path — all ``archv.`` / ``archm.YYYY_DDD_HH.[ab]``
+          pairs found inside are used.
+        * A glob pattern such as ``"data/archm.1993_*.a"``.
         * An explicit list of archive basenames or filenames.
 
     grid : str or xr.Dataset, optional
@@ -148,6 +166,9 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False):
     skip_errors : bool
         If ``True``, files that fail to open are skipped with a warning
         rather than raising an exception.  Default ``False``.
+    chunks : int, dict, or "auto", optional
+        If provided, the returned Dataset is chunked with Dask.  Passed
+        directly to ``ds.chunk()``.  Example: ``chunks={"time": 1}``.
 
     Returns
     -------
@@ -179,7 +200,7 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False):
     datasets = []
     for basename in basenames:
         try:
-            datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian))
+            datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks))
         except Exception as exc:
             if skip_errors:
                 warnings.warn(f"Skipping {basename!r}: {exc}", stacklevel=2)
@@ -189,4 +210,5 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False):
     if not datasets:
         raise RuntimeError("No files were successfully opened.")
 
-    return xr.concat(datasets, dim="time", data_vars="minimal", compat="override")
+    ds = xr.concat(datasets, dim="time", data_vars="minimal", compat="override")
+    return ds.chunk(chunks) if chunks is not None else ds

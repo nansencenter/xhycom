@@ -3,8 +3,8 @@ import glob
 import os
 import re
 
-# Matches: archv.YYYY_DDD_HH  or  archv.YYYY_DDD
-_ARCHV_RE = re.compile(r"archv\.(\d{4})_(\d{3})(?:_(\d{2}))?$")
+# Matches: archv.YYYY_DDD_HH  or  archv.YYYY_DDD  (and archm equivalents)
+_ARCHV_RE = re.compile(r"arch[vm]\.(\d{4})_(\d{3})(?:_(\d{2}))?$")
 
 
 def _sort_key(basename):
@@ -46,7 +46,10 @@ def find_archv_files(path):
     'data/archv.2020_001_00'
     """
     if os.path.isdir(path):
-        candidates = glob.glob(os.path.join(path, "archv.*.b"))
+        candidates = (
+            glob.glob(os.path.join(path, "archv.*.b")) +
+            glob.glob(os.path.join(path, "archm.*.b"))
+        )
     else:
         # Treat as glob; strip any .a/.b suffix before globbing
         base_pattern = re.sub(r"\.[ab]$", "", path)
@@ -61,8 +64,8 @@ def find_archv_files(path):
 
     if not basenames:
         raise ValueError(
-            f"No archv .ab file pairs found at {path!r}. "
-            "Expected files named archv.YYYY_DDD_HH.[ab]"
+            f"No archive .ab file pairs found at {path!r}. "
+            "Expected files named archv.YYYY_DDD_HH.[ab] or archm.YYYY_DDD_HH.[ab]"
         )
 
     return sorted(set(basenames), key=_sort_key)
