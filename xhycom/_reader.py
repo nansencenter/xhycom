@@ -123,6 +123,33 @@ def _attrs_for(fname):
 
 
 # ---------------------------------------------------------------------------
+# Grid variable metadata
+# ---------------------------------------------------------------------------
+
+_GRID_ATTRS = {
+    "plon": {"long_name": "longitude of T-point",            "units": "degrees_east",  "standard_name": "longitude"},
+    "plat": {"long_name": "latitude of T-point",             "units": "degrees_north", "standard_name": "latitude"},
+    "qlon": {"long_name": "longitude of Q-point (vorticity)","units": "degrees_east"},
+    "qlat": {"long_name": "latitude of Q-point (vorticity)", "units": "degrees_north"},
+    "ulon": {"long_name": "longitude of U-point",            "units": "degrees_east"},
+    "ulat": {"long_name": "latitude of U-point",             "units": "degrees_north"},
+    "vlon": {"long_name": "longitude of V-point",            "units": "degrees_east"},
+    "vlat": {"long_name": "latitude of V-point",             "units": "degrees_north"},
+    "pang": {"long_name": "local angle of grid x-axis from true east (T-point)", "units": "radians"},
+    "scpx": {"long_name": "T-point grid spacing in x",       "units": "m"},
+    "scpy": {"long_name": "T-point grid spacing in y",       "units": "m"},
+    "scqx": {"long_name": "Q-point grid spacing in x",       "units": "m"},
+    "scqy": {"long_name": "Q-point grid spacing in y",       "units": "m"},
+    "scux": {"long_name": "U-point grid spacing in x",       "units": "m"},
+    "scuy": {"long_name": "U-point grid spacing in y",       "units": "m"},
+    "scvx": {"long_name": "V-point grid spacing in x",       "units": "m"},
+    "scvy": {"long_name": "V-point grid spacing in y",       "units": "m"},
+    "cori": {"long_name": "Coriolis parameter",              "units": "s-1"},
+    "pasp": {"long_name": "T-point aspect ratio (scpx / scpy)", "units": "1"},
+}
+
+
+# ---------------------------------------------------------------------------
 # Staggered C-grid helpers
 # ---------------------------------------------------------------------------
 
@@ -381,6 +408,7 @@ def read_grid(basename, endian="big"):
         if raw is not None:
             data_vars[fname] = xr.DataArray(
                 _fill(raw), dims=["y", "x"], name=fname,
+                attrs=_GRID_ATTRS.get(fname, {}),
             )
     gf.close()
     return xr.Dataset(data_vars)
