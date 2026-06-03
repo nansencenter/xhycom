@@ -10,7 +10,7 @@ It is inspired by [xmitgcm](https://xmitgcm.readthedocs.io), which does the same
 
 why-xhycom
 installation
-quickstart
+quickstart.ipynb
 how-it-works
 api
 roadmap

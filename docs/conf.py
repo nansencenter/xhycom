@@ -13,10 +13,11 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
-    "myst_parser",
+    "myst_nb",
     "sphinx_copybutton",
 ]
 
+nb_execution_mode = "off"   # notebooks are pre-executed; don't re-run at build time
 myst_enable_extensions = ["colon_fence"]
 
 intersphinx_mapping = {

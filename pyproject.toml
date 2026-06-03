@@ -24,6 +24,7 @@ docs = [
     "sphinx-rtd-theme",
     "myst-parser",
     "sphinx-copybutton",
+    "myst-nb",
     "furo",
 ]
 
