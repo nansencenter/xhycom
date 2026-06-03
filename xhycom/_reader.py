@@ -81,8 +81,16 @@ def read_archv(basename, grid_ds=None, endian="big"):
         base_coords["lon"] = (["y", "x"], grid_ds["plon"].values)
         base_coords["lat"] = (["y", "x"], grid_ds["plat"].values)
 
+    # T-point variables in priority order for choosing the dens coordinate.
+    # dens should reflect the layer's nominal target density, which is defined
+    # at the tracer point. U/V-point values are spatial averages of neighbouring
+    # T-point cells and will differ slightly on a staggered C-grid.
+    _TPOINT_VARS = ("thknss", "temp", "salin", "density")
+
     data_vars = {}
     global_kdens = {}
+    _dens_from_tpoint = False
+
     for fname, kdens in field_kdens.items():
         levels = sorted(kdens)
         if len(levels) == 1:
@@ -99,7 +107,10 @@ def read_archv(basename, grid_ds=None, endian="big"):
                 stack, dims=["k", "y", "x"],
                 coords=coords, name=fname,
             )
-            global_kdens.update(kdens)
+            is_tpoint = fname in _TPOINT_VARS
+            if is_tpoint or not _dens_from_tpoint:
+                global_kdens.update(kdens)
+                _dens_from_tpoint = _dens_from_tpoint or is_tpoint
 
     af.close()
     ds = xr.Dataset(data_vars, attrs=global_attrs)
