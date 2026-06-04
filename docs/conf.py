@@ -38,7 +38,7 @@ napoleon_google_docstring = False
 
 html_theme = "sphinx_book_theme"
 html_theme_options = {
-    "repository_url": "https://github.com/NoraLoose/xhycom",
+    "repository_url": "https://github.com/nansencenter/xhycom",
     "use_repository_button": True,
     "use_issues_button": True,
 }

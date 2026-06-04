@@ -7,7 +7,7 @@ directly from the native `.ab` format.
 ## Installation
 
 ```bash
-pip install git+https://github.com/NoraLoose/xhycom.git
+pip install git+https://github.com/nansencenter/xhycom.git
 ```
 
 **Dependencies:** `numpy`, `xarray`, `cftime` — no Fortran compiler or
