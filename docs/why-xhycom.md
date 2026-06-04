@@ -89,7 +89,7 @@ xhycom reads `.ab` pairs directly into a labelled `xr.Dataset` — no intermedia
 import xhycom
 
 ds = xhycom.open_dataset("archv.2020_001_00", grid="regional.grid")
-ds["temp"].isel(time=0, k=0).plot(x="lon", y="lat")
+ds["temp"].isel(time=0, k=0).plot()
 ```
 
 Everything that approaches 1 and 2 require you to assemble by hand is handled automatically:
@@ -139,7 +139,7 @@ For a full time series, file discovery is automatic:
 ds = xhycom.open_mfdataset("data/", grid="regional.grid",
                             chunks={"time": 1})
 # → time dimension spans every archv.YYYY_DDD_HH pair in data/
-ds["temp"].isel(k=0).mean("time").plot(x="lon", y="lat")
+ds["temp"].isel(k=0).mean("time").plot()
 ```
 
 ### Exporting to NetCDF

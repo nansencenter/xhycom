@@ -14,30 +14,49 @@ by its integer position:
 arr[0, 5, 100, 200]   # what does this mean?
 ```
 
-An **xarray DataArray** wraps the same numbers but gives every axis a name and
-every point along that axis a coordinate value:
+An **xarray Dataset** wraps the same numbers but gives every axis a name, attaches
+coordinate values, and carries metadata.  Here is what a real HYCOM archive looks
+like when opened with xhycom:
 
 ```
-NumPy array (shape only)          xarray DataArray (shape + meaning)
-──────────────────────────────    ──────────────────────────────────────────
-arr.shape                         da.dims
-(120, 40, 880, 800)               ('time', 'k', 'y', 'x')
-
-arr[0, 5, :, :]                   da.isel(time=0, k=5)       # by index
-                                  da.sel(time='1993-01-15')  # by label
-
-no coordinates                    Coordinates:
-no labels                           time  (time)  cftime 1993-01-15 …
-no units                            k     (k)     int64  1 2 … 40
-                                    dens  (k)     float64 1026.5 …
-                                    lon   (y, x)  float64 …
-                                    lat   (y, x)  float64 …
-                                  Attributes:
-                                    units: degC
-                                    long_name: sea water potential temperature
+>>> import xhycom
+>>> ds = xhycom.open_dataset("archm.2020_001_12", grid="regional.grid")
+>>> ds
+<xarray.Dataset> Size: 3GB
+Dimensions:  (time: 1, y: 380, x: 400, k: 50, ki: 51)
+Coordinates:
+  * time     (time)  object   2020-01-01 00:00:00
+    lon      (y, x)  float64  -94.75 -94.58 … 98.95 98.82
+    lat      (y, x)  float64   39.06  39.16 … 56.29 56.20
+    lon_u    (y, x)  float64  -94.83 -94.67 … 99.02 98.89
+    lat_u    (y, x)  float64   39.01  39.11 … 56.34 56.25
+    lon_v    (y, x)  float64  -94.68 -94.52 … 98.87 98.74
+    lat_v    (y, x)  float64   38.99  39.09 … 56.33 56.24
+  * k        (k)     int64     1 2 3 … 48 49 50
+    dens     (k)     float64   0.1 0.2 … 28.11 28.12
+  * ki       (ki)    int64     0 1 2 … 49 50
+Data variables: (12/83)
+    montg1   (time, y, x)    float64  …
+    srfhgt   (time, y, x)    float64  …
+    temp     (time, k, y, x) float64  …
+    salin    (time, k, y, x) float64  …
+    u-vel.   (time, k, y, x) float64  …
+    v-vel.   (time, k, y, x) float64  …
+    …
+Attributes:
+    iversn:  23    iexpt:  28    yrflag:  3
 ```
 
-You select by *what* rather than *where*, and the code reads like the science.
+Every axis has a name (`time`, `k`, `y`, `x`).  The curvilinear grid coordinates
+(`lon`, `lat`) and the layer density axis (`dens`) are attached directly.  You
+select by *what* rather than *where*, and the code reads like the science:
+
+```python
+arr[0, 5, 100, 200]                          # NumPy: what is this?
+ds["temp"].isel(time=0, k=5)                 # xarray: surface layer, first snapshot
+ds["temp"].isel(time=0).sel(dens=27.0,       # select by density instead of index
+                            method="nearest")
+```
 
 ---
 
@@ -70,7 +89,7 @@ Because coordinates are embedded in the data, xarray's `.plot()` method
 automatically labels axes, titles, and colourbars:
 
 ```python
-ds["temp"].isel(time=0, k=0).plot(x="lon", y="lat")
+ds["temp"].isel(time=0, k=0).plot()
 ```
 
 With NumPy + Matplotlib you would need to pass `plon` and `plat` explicitly,

@@ -12,7 +12,5 @@ why-xarray
 why-xhycom
 installation
 quickstart.ipynb
-how-it-works
 api
-roadmap
 ```
