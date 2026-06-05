@@ -314,16 +314,6 @@ def _read_archv_meta(basename, endian="big"):
 
     af.close()  # only closes .b — .a was never opened
 
-    # k→dens for layer-centre variables; prefer T-point values.
-    global_kdens: dict = {}
-    for uname, kdens in field_kdens.items():
-        if len(kdens) > 1 and 0 not in kdens:
-            global_kdens.update(kdens)
-    for fname in _TPOINT_DENS_PRIORITY:
-        if fname in field_kdens and len(field_kdens[fname]) > 1 and 0 not in field_kdens[fname]:
-            global_kdens.update(field_kdens[fname])
-            break
-
     time = None
     if model_day is not None and yrflag is not None:
         time = model_day_to_datetime(model_day, yrflag)
@@ -336,12 +326,49 @@ def _read_archv_meta(basename, endian="big"):
         "yrflag": yrflag,
         "iversn": iversn,
         "iexpt": iexpt,
-        "global_kdens": global_kdens,
+        "global_kdens": _compute_global_kdens(field_kdens),
         "time": time,
     }
 
 
-def _build_mf_lazy(basenames, metas, grid_ds, endian):
+def _compute_global_kdens(field_kdens):
+    """Build the k→dens mapping from a (possibly filtered) field_kdens dict.
+
+    Prefers T-point variables as the authoritative source for layer densities.
+    """
+    global_kdens: dict = {}
+    for kdens in field_kdens.values():
+        if len(kdens) > 1 and 0 not in kdens:
+            global_kdens.update(kdens)
+    for fname in _TPOINT_DENS_PRIORITY:
+        if fname in field_kdens and len(field_kdens[fname]) > 1 and 0 not in field_kdens[fname]:
+            global_kdens.update(field_kdens[fname])
+            break
+    return global_kdens
+
+
+def _apply_variables_filter(field_kdens, field_k_record, variables, source):
+    """Return filtered copies of field_kdens and field_k_record.
+
+    Emits a warning for any requested variable not present in *source*.
+    """
+    import warnings
+    requested = set(variables)
+    available = set(field_kdens)
+    missing = sorted(requested - available)
+    if missing:
+        warnings.warn(
+            f"{source}: requested variables not found and skipped: {missing}",
+            stacklevel=3,
+        )
+    keep = requested & available
+    return (
+        {k: v for k, v in field_kdens.items() if k in keep},
+        {k: v for k, v in field_k_record.items() if k in keep},
+    )
+
+
+def _build_mf_lazy(basenames, metas, grid_ds, endian, variables=None):
     """Build a combined lazy Dataset from pre-parsed per-file metadata.
 
     Constructs Dask arrays directly rather than calling xr.concat, avoiding
@@ -354,12 +381,16 @@ def _build_mf_lazy(basenames, metas, grid_ds, endian):
     times = [m["time"] for m in metas]
     jdm, idm = ref["jdm"], ref["idm"]
 
-    global_kdens: dict = {}
-    for m in metas:
-        global_kdens.update(m["global_kdens"])
+    field_kdens = ref["field_kdens"]
+    if variables is not None:
+        field_kdens, _ = _apply_variables_filter(
+            field_kdens, ref["field_k_record"], variables, source="archive",
+        )
+
+    global_kdens = _compute_global_kdens(field_kdens)
 
     data_vars = {}
-    for uname, kdens in ref["field_kdens"].items():
+    for uname, kdens in field_kdens.items():
         levels = sorted(kdens)
         h_coords = _h_coords(uname, grid_ds)
         attrs = _attrs_for(uname)
@@ -418,7 +449,7 @@ def _build_mf_lazy(basenames, metas, grid_ds, endian):
     return ds
 
 
-def read_archv(basename, grid_ds=None, endian="big", chunks=None):
+def read_archv(basename, grid_ds=None, endian="big", chunks=None, variables=None):
     """Read a HYCOM archive ``.ab`` file pair into an ``xr.Dataset``.
 
     Parameters
@@ -428,13 +459,22 @@ def read_archv(basename, grid_ds=None, endian="big", chunks=None):
         file is not touched until the returned Dataset is computed.
         The value is forwarded to ``ds.chunk()`` to set chunk boundaries
         (e.g. ``{"k": 1}`` for one layer per chunk).
+    variables : list of str, optional
+        If provided, only these variables are included in the returned Dataset.
+        Variables not present in the file are silently skipped with a warning.
     """
     meta = _read_archv_meta(basename, endian=endian)
 
     field_kdens = meta["field_kdens"]
     field_k_record = meta["field_k_record"]
+
+    if variables is not None:
+        field_kdens, field_k_record = _apply_variables_filter(
+            field_kdens, field_k_record, variables, source=basename,
+        )
+
     jdm, idm = meta["jdm"], meta["idm"]
-    global_kdens = meta["global_kdens"]
+    global_kdens = _compute_global_kdens(field_kdens)
     global_attrs = {"iversn": meta["iversn"], "iexpt": meta["iexpt"], "yrflag": meta["yrflag"]}
 
     if chunks is not None:

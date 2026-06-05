@@ -26,7 +26,7 @@ def _load_grid(grid, endian):
     return open_dataset(grid, endian=endian)
 
 
-def open_dataset(path, grid=None, endian="big", chunks=None):
+def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
     """Open a HYCOM ``.ab`` file pair as an ``xr.Dataset``.
 
     Automatically detects the file type (archive, grid, or bathymetry) from
@@ -115,7 +115,8 @@ def open_dataset(path, grid=None, endian="big", chunks=None):
     # Forward globs and directories to open_mfdataset.
     import os as _os
     if any(c in path for c in "*?[") or _os.path.isdir(path):
-        return open_mfdataset(path, grid=grid, endian=endian, chunks=chunks)
+        return open_mfdataset(path, grid=grid, endian=endian, chunks=chunks,
+                              variables=variables)
 
     basename = ABFile.strip_ab_ending(path)
     filetype = detect_filetype(basename)
@@ -127,7 +128,8 @@ def open_dataset(path, grid=None, endian="big", chunks=None):
     elif filetype == "archv":
         # chunks is handled inside read_archv: data is never loaded eagerly
         # when chunks is set — Dask tasks are created instead.
-        return read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks)
+        return read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks,
+                          variables=variables)
     elif filetype == "bathy":
         if grid_ds is None:
             raise ValueError(
@@ -142,7 +144,8 @@ def open_dataset(path, grid=None, endian="big", chunks=None):
     return ds.chunk(chunks) if chunks is not None else ds
 
 
-def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=None):
+def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=None,
+                   variables=None):
     """Open multiple HYCOM archive ``.ab`` file pairs as a single ``xr.Dataset``.
 
     Snapshots are concatenated along a ``time`` dimension in chronological
@@ -169,6 +172,11 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
     chunks : int, dict, or "auto", optional
         If provided, the returned Dataset is chunked with Dask.  Passed
         directly to ``ds.chunk()``.  Example: ``chunks={"time": 1}``.
+    variables : list of str, optional
+        If provided, only these variables are included in the returned Dataset.
+        Reduces the Dask graph size proportionally — useful when working with
+        large archives that contain many variables (e.g. BGC runs).
+        Variables not present in the archive are skipped with a warning.
 
     Returns
     -------
@@ -233,7 +241,7 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
         if not metas:
             raise RuntimeError("No files were successfully opened.")
 
-        ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian)
+        ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian, variables=variables)
         return ds.chunk(chunks)
 
     else:
@@ -241,7 +249,8 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
         datasets = []
         for basename in basenames:
             try:
-                datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian))
+                datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian,
+                                           variables=variables))
             except Exception as exc:
                 if skip_errors:
                     warnings.warn(f"Skipping {basename!r}: {exc}", stacklevel=2)
