@@ -241,7 +241,16 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
         if not metas:
             raise RuntimeError("No files were successfully opened.")
 
-        ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian, variables=variables)
+        # Extract the integer time chunk size so the graph is built with the
+        # right granularity — avoids creating 1-file tasks and then rechunking.
+        time_chunk = 1
+        if isinstance(chunks, dict) and isinstance(chunks.get("time"), int):
+            time_chunk = chunks["time"]
+        elif isinstance(chunks, int):
+            time_chunk = chunks
+
+        ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian,
+                            variables=variables, time_chunk=time_chunk)
         return ds.chunk(chunks)
 
     else:
