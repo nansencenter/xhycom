@@ -55,3 +55,8 @@ Source        = "https://github.com/nansencenter/xhycom"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["xhycom*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Reader/postprocess tests run on the base + dev install.  Regrid tests need
+# xgcm (pip); the lateral-regrid tests self-skip when xesmf is unavailable.
