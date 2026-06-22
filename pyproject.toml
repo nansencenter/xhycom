@@ -30,6 +30,14 @@ classifiers = [
 
 [project.optional-dependencies]
 lazy = ["dask"]
+# Vertical regridding (regrid_vertical / depth interpolation) is pure-Python
+# and fully pip-installable:
+#     pip install xhycom[regrid]
+regrid = ["xgcm", "dask"]
+# Lateral regridding (regrid_horizontal / the full regrid wrapper) additionally
+# needs xESMF.  Its ESMF/esmpy backend has no PyPI wheels, so it must come from
+# conda-forge -- there is no pip-only path.  Ready-made env:
+#     conda env create -f ci/environment-regrid.yml
 dev = ["pytest", "pytest-cov"]
 docs = [
     "sphinx",

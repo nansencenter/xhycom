@@ -1,0 +1,19 @@
+name: xhycom-regrid
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - xarray
+  - cftime
+  # regridding stack (xesmf pulls in ESMF/esmpy, which is conda-only)
+  - xgcm
+  - xesmf
+  - dask
+  - scipy
+  # testing
+  - pytest
+  - pytest-cov
+  - pip
+  - pip:
+      - -e ..         # install xhycom itself in editable mode
