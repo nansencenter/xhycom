@@ -47,6 +47,7 @@ def test_layer_centre_depth_strictly_increasing_with_massless_layers():
 # regrid_vertical
 # ---------------------------------------------------------------------------
 def test_regrid_vertical_recovers_layer_centres():
+    pytest.importorskip("xgcm")
     ds, z_centre = _column_ds()
     out = xhycom.regrid_vertical(ds, depth=z_centre)
     expected = 20.0 - 0.1 * z_centre
@@ -57,6 +58,7 @@ def test_regrid_vertical_recovers_layer_centres():
 
 
 def test_regrid_vertical_linear_interpolation():
+    pytest.importorskip("xgcm")
     ds, _ = _column_ds()  # centres 5,15,25,35,45 ; temp linear in z
     out = xhycom.regrid_vertical(ds, depth=[10.0, 20.0, 30.0])
     # linear field -> interpolated values lie exactly on the line
@@ -66,12 +68,14 @@ def test_regrid_vertical_linear_interpolation():
 
 
 def test_regrid_vertical_masks_below_bottom():
+    pytest.importorskip("xgcm")
     ds, _ = _column_ds()  # bottom centre ~45 m
     out = xhycom.regrid_vertical(ds, depth=[100.0], mask_edges=True)
     assert np.isnan(out["temp"].isel(y=0, x=0).values).all()
 
 
 def test_regrid_vertical_drops_thknss_and_keeps_2d():
+    pytest.importorskip("xgcm")
     ds, _ = _column_ds()
     ds["srfhgt"] = xr.DataArray(np.ones((3, 4)), dims=("y", "x"))
     out = xhycom.regrid_vertical(ds, depth=[5, 15])
