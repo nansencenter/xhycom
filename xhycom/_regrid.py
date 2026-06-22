@@ -18,9 +18,12 @@ module provides three composable functions:
 * :func:`regrid_vertical`   — hybrid layers → fixed depth levels (xgcm).
 * :func:`regrid`            — convenience wrapper that chains both.
 
-The heavy dependencies (``xesmf``, ``xgcm``) are imported lazily so that
-``import xhycom`` works without them.  Install with ``pip install xhycom[regrid]``
-(see ``ci/environment-regrid.yml`` — xESMF needs conda-forge).
+The heavy dependencies are imported lazily so that ``import xhycom`` works
+without them:
+
+* Vertical regridding needs only ``xgcm`` (pip): ``pip install xhycom[regrid]``.
+* Lateral regridding additionally needs ``xesmf``, whose ESMF/esmpy backend is
+  conda-only (no PyPI wheels): ``conda env create -f ci/environment-regrid.yml``.
 """
 import numpy as np
 import xarray as xr
