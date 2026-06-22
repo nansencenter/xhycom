@@ -13,11 +13,16 @@ from ._abfile import ABFile
 from ._discovery import find_archv_files
 from ._reader import detect_filetype, read_archv, read_bathy, read_grid, _read_archv_meta, _build_mf_lazy
 from ._regrid import regrid, regrid_horizontal, regrid_vertical
+from ._postprocess import postprocess
+# Private alias so the public `postprocess` name can also be a keyword argument
+# on open_dataset / open_mfdataset without shadowing the function.
+_postprocess_ds = postprocess
 
 __version__ = "0.1.0"
 __all__ = [
     "open_dataset",
     "open_mfdataset",
+    "postprocess",
     "regrid",
     "regrid_horizontal",
     "regrid_vertical",
@@ -33,7 +38,8 @@ def _load_grid(grid, endian):
     return open_dataset(grid, endian=endian)
 
 
-def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
+def open_dataset(path, grid=None, endian="big", chunks=None, variables=None,
+                 postprocess=False):
     """Open a HYCOM ``.ab`` file pair as an ``xr.Dataset``.
 
     Automatically detects the file type (archive, grid, or bathymetry) from
@@ -64,6 +70,11 @@ def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
         If provided, the returned Dataset is chunked with Dask.  Passed
         directly to ``ds.chunk()``.  Example: ``chunks={"k": 1}`` to chunk
         one layer at a time.
+    postprocess : bool
+        If ``True``, convert native units to physical ones and add derived
+        fields via :func:`xhycom.postprocess` — e.g. sea-surface height and
+        layer thicknesses in metres, plus ``area`` / ``landmask``.  Default
+        ``False`` (data are returned exactly as stored on disk).
 
     Returns
     -------
@@ -123,7 +134,7 @@ def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
     import os as _os
     if any(c in path for c in "*?[") or _os.path.isdir(path):
         return open_mfdataset(path, grid=grid, endian=endian, chunks=chunks,
-                              variables=variables)
+                              variables=variables, postprocess=postprocess)
 
     basename = ABFile.strip_ab_ending(path)
     filetype = detect_filetype(basename)
@@ -135,8 +146,9 @@ def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
     elif filetype == "archv":
         # chunks is handled inside read_archv: data is never loaded eagerly
         # when chunks is set — Dask tasks are created instead.
-        return read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks,
-                          variables=variables)
+        ds = read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks,
+                        variables=variables)
+        return _postprocess_ds(ds) if postprocess else ds
     elif filetype == "bathy":
         if grid_ds is None:
             raise ValueError(
@@ -148,11 +160,13 @@ def open_dataset(path, grid=None, endian="big", chunks=None, variables=None):
     else:
         raise ValueError(f"Unsupported file type {filetype!r} for open_dataset.")
 
+    if postprocess:
+        ds = _postprocess_ds(ds)
     return ds.chunk(chunks) if chunks is not None else ds
 
 
 def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=None,
-                   variables=None):
+                   variables=None, postprocess=False):
     """Open multiple HYCOM archive ``.ab`` file pairs as a single ``xr.Dataset``.
 
     Snapshots are concatenated along a ``time`` dimension in chronological
@@ -184,6 +198,9 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
         Reduces the Dask graph size proportionally — useful when working with
         large archives that contain many variables (e.g. BGC runs).
         Variables not present in the archive are skipped with a warning.
+    postprocess : bool
+        If ``True``, apply :func:`xhycom.postprocess` to the combined Dataset
+        (native-unit conversions + derived fields).  Default ``False``.
 
     Returns
     -------
@@ -258,6 +275,8 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
 
         ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian,
                             variables=variables, time_chunk=time_chunk)
+        if postprocess:
+            ds = _postprocess_ds(ds)
         return ds.chunk(chunks)
 
     else:
@@ -276,6 +295,7 @@ def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=Non
         if not datasets:
             raise RuntimeError("No files were successfully opened.")
 
-        return xr.concat(
+        ds = xr.concat(
             datasets, dim="time", data_vars="minimal", coords="minimal", compat="override",
         )
+        return _postprocess_ds(ds) if postprocess else ds

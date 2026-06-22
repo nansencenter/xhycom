@@ -321,8 +321,12 @@ def layer_centre_depth(thknss, layer_dim="k"):
     massless / zero-thickness hybrid layers — which would otherwise share an
     identical depth and make the column non-monotonic — do not break the
     vertical interpolation.
+
+    Unit-aware: if ``thknss`` already carries ``units='m'`` (e.g. after
+    ``open_dataset(..., postprocess=True)``) it is used as-is; otherwise it is
+    treated as pressure in Pa and divided by ``onem`` (9806).
     """
-    thknss_m = thknss / _ONEM
+    thknss_m = thknss if thknss.attrs.get("units") == "m" else thknss / _ONEM
     z_interface = thknss_m.cumsum(layer_dim)
     z_centre = z_interface - thknss_m / 2
 
