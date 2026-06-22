@@ -12,9 +12,16 @@ import xarray as xr
 from ._abfile import ABFile
 from ._discovery import find_archv_files
 from ._reader import detect_filetype, read_archv, read_bathy, read_grid, _read_archv_meta, _build_mf_lazy
+from ._regrid import regrid, regrid_horizontal, regrid_vertical
 
 __version__ = "0.1.0"
-__all__ = ["open_dataset", "open_mfdataset"]
+__all__ = [
+    "open_dataset",
+    "open_mfdataset",
+    "regrid",
+    "regrid_horizontal",
+    "regrid_vertical",
+]
 
 
 def _load_grid(grid, endian):

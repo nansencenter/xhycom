@@ -30,6 +30,10 @@ classifiers = [
 
 [project.optional-dependencies]
 lazy = ["dask"]
+# Vertical + lateral regridding to a regular lon/lat/depth grid.
+# NOTE: xesmf depends on ESMF/esmpy, which is only reliably installable via
+# conda-forge (not pip).  See ci/environment-regrid.yml for a ready-made env.
+regrid = ["xgcm", "xesmf", "dask"]
 dev = ["pytest", "pytest-cov"]
 docs = [
     "sphinx",
