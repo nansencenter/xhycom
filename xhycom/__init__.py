@@ -5,7 +5,10 @@ Public API
 open_dataset(path, ...)       Open any HYCOM .ab file pair (archv, grid, bathy).
 open_mfdataset(paths, ...)    Open a time series of archive snapshots.
 """
+from __future__ import annotations
+
 import warnings
+from typing import Iterable, Union
 
 import xarray as xr
 
@@ -28,8 +31,13 @@ __all__ = [
     "regrid_vertical",
 ]
 
+# A grid argument is either a path to ``regional.grid`` or a pre-loaded Dataset.
+GridArg = Union[str, xr.Dataset, None]
+# ``chunks`` is forwarded to ``Dataset.chunk`` (int, mapping, "auto", or None).
+Chunks = Union[int, dict, str, None]
 
-def _load_grid(grid, endian):
+
+def _load_grid(grid: GridArg, endian: str) -> "xr.Dataset | None":
     """Accept a path string or pre-loaded Dataset; return a Dataset."""
     if grid is None:
         return None
@@ -38,8 +46,9 @@ def _load_grid(grid, endian):
     return open_dataset(grid, endian=endian)
 
 
-def open_dataset(path, grid=None, endian="big", chunks=None, variables=None,
-                 postprocess=False):
+def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
+                 chunks: Chunks = None, variables: "list[str] | None" = None,
+                 postprocess: bool = False) -> xr.Dataset:
     """Open a HYCOM ``.ab`` file pair as an ``xr.Dataset``.
 
     Automatically detects the file type (archive, grid, or bathymetry) from
@@ -165,8 +174,10 @@ def open_dataset(path, grid=None, endian="big", chunks=None, variables=None,
     return ds.chunk(chunks) if chunks is not None else ds
 
 
-def open_mfdataset(paths, grid=None, endian="big", skip_errors=False, chunks=None,
-                   variables=None, postprocess=False):
+def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
+                   endian: str = "big", skip_errors: bool = False,
+                   chunks: Chunks = None, variables: "list[str] | None" = None,
+                   postprocess: bool = False) -> xr.Dataset:
     """Open multiple HYCOM archive ``.ab`` file pairs as a single ``xr.Dataset``.
 
     Snapshots are concatenated along a ``time`` dimension in chronological

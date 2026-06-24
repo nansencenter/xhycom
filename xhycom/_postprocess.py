@@ -20,7 +20,10 @@ pressure in Pa) and only the variables physically stored on disk are present.
 It is exposed both via ``open_dataset(..., postprocess=True)`` and as the
 public :func:`xhycom.postprocess` so it can be applied to an existing Dataset.
 """
+from __future__ import annotations
+
 import numpy as np
+import xarray as xr
 
 # Gravity (m s^-2) for geopotential -> height; "onem" (Pa per metre) for
 # pressure -> thickness.  Keep these named so the two are never conflated.
@@ -28,7 +31,7 @@ _G = 9.806
 _ONEM = 9806.0
 
 # name -> (factor, new units, new long_name or None)
-_UNIT_CONVERSIONS = {
+_UNIT_CONVERSIONS: dict[str, tuple[float, str, str | None]] = {
     "srfhgt":   (1.0 / _G,    "m", "sea surface height"),
     "thknss":   (1.0 / _ONEM, "m", "layer thickness"),
     "mix_dpth": (1.0 / _ONEM, "m", "mixed layer depth"),
@@ -37,7 +40,7 @@ _UNIT_CONVERSIONS = {
 }
 
 
-def postprocess(ds):
+def postprocess(ds: xr.Dataset) -> xr.Dataset:
     """Return a copy of *ds* with native units converted and derived fields added.
 
     Idempotent-ish: a field already carrying ``units='m'`` is not re-scaled, and
@@ -69,7 +72,8 @@ def postprocess(ds):
     return ds
 
 
-def _scale(da, factor, units, long_name=None):
+def _scale(da: xr.DataArray, factor: float, units: str,
+           long_name: str | None = None) -> xr.DataArray:
     """Scale a DataArray, replacing its units/long_name and recording the source."""
     native = da.attrs.get("units", "native")
     out = da * factor                       # lazy for Dask; drops attrs
@@ -82,13 +86,13 @@ def _scale(da, factor, units, long_name=None):
     return out.rename(da.name)
 
 
-def _grid_area(ds):
+def _grid_area(ds: xr.Dataset) -> xr.DataArray:
     area = (ds["scpx"] * ds["scpy"]).rename("area")
     area.attrs = {"long_name": "grid cell area", "units": "m2"}
     return area
 
 
-def _landmask(depth):
+def _landmask(depth: xr.DataArray) -> xr.DataArray:
     mask = depth.notnull().astype("int8").rename("landmask")
     mask.attrs = {
         "long_name": "land-sea mask",

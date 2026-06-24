@@ -1,6 +1,9 @@
 """Readers for all HYCOM .ab file types, plus file type detection."""
+from __future__ import annotations
+
 import re
 from collections import defaultdict, Counter
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -14,7 +17,7 @@ from ._abfile import (
 from ._time import model_day_to_datetime
 
 
-def _fill(arr):
+def _fill(arr: "np.ma.MaskedArray") -> np.ndarray:
     """Masked array → float64 ndarray, masked values replaced by NaN."""
     return np.ma.filled(arr.astype(np.float64), np.nan)
 
@@ -113,7 +116,7 @@ _FIELD_ATTRS = {
 }
 
 
-def _attrs_for(fname):
+def _attrs_for(fname: str) -> "dict[str, str]":
     """Return metadata attrs for fname, falling back to the base name for
     renamed duplicates (e.g. 'ECO_c2ch_2' → look up 'ECO_c2ch')."""
     if fname in _FIELD_ATTRS:
@@ -161,7 +164,7 @@ _V_VARS = frozenset({"v-vel.", "v_btrop", "vmix", "si_v"})
 _TPOINT_DENS_PRIORITY = ("thknss", "temp", "salin", "density")
 
 
-def _h_coords(fname, grid_ds):
+def _h_coords(fname: str, grid_ds: "xr.Dataset | None") -> dict:
     """Horizontal lon/lat coordinates for fname's staggering point.
 
     T-point → lon/lat  (plon/plat)
@@ -194,7 +197,7 @@ def _h_coords(fname, grid_ds):
     }
 
 
-def _v_dim(levels):
+def _v_dim(levels: "list[int]") -> str:
     """Vertical dimension name for a multi-level variable.
 
     Layer centres (k = 1..N)       → 'k'
@@ -207,7 +210,7 @@ def _v_dim(levels):
 # File type detection
 # ---------------------------------------------------------------------------
 
-def detect_filetype(basename):
+def detect_filetype(basename: str) -> str:
     """Detect the type of a HYCOM ``.ab`` file pair from the ``.b`` header.
 
     Parameters
@@ -247,7 +250,7 @@ def detect_filetype(basename):
 # Lazy-loading helper (module-level so Dask can serialise it)
 # ---------------------------------------------------------------------------
 
-def _read_record_lazy(basename, record_idx, endian):
+def _read_record_lazy(basename: str, record_idx: int, endian: str) -> np.ndarray:
     """Open the archive and read one 2-D slab by record index.
 
     Module-level so Dask can serialise it across workers.
@@ -258,7 +261,8 @@ def _read_record_lazy(basename, record_idx, endian):
     return _fill(raw)
 
 
-def _read_var_lazy(basename, record_indices, endian):
+def _read_var_lazy(basename: str, record_indices: "list[int]",
+                   endian: str) -> np.ndarray:
     """Open the archive and read all vertical levels of one variable.
 
     Returns a (nlev, jdm, idm) array for multi-level variables and a
@@ -271,7 +275,9 @@ def _read_var_lazy(basename, record_indices, endian):
     return slabs[0] if len(slabs) == 1 else np.stack(slabs, axis=0)
 
 
-def _read_var_group_lazy(basenames, record_indices_per_file, endian):
+def _read_var_group_lazy(basenames: "list[str]",
+                         record_indices_per_file: "list[list[int]]",
+                         endian: str) -> np.ndarray:
     """Read one variable from a group of files; returns (n_files, [nlev,] jdm, idm).
 
     Used when time_chunk > 1 so that multiple files form a single Dask task,
@@ -291,7 +297,7 @@ def _read_var_group_lazy(basenames, record_indices_per_file, endian):
 # Per-type readers (internal)
 # ---------------------------------------------------------------------------
 
-def _read_archv_meta(basename, endian="big"):
+def _read_archv_meta(basename: str, endian: str = "big") -> "dict[str, Any]":
     """Parse the .b header of an archive file, returning metadata without reading .a data.
 
     Returns a dict with keys: field_kdens, field_k_record, jdm, idm, yrflag,
@@ -343,7 +349,7 @@ def _read_archv_meta(basename, endian="big"):
     }
 
 
-def _compute_global_kdens(field_kdens):
+def _compute_global_kdens(field_kdens: dict) -> "dict[int, float]":
     """Build the k→dens mapping from a (possibly filtered) field_kdens dict.
 
     Prefers T-point variables as the authoritative source for layer densities.
@@ -359,7 +365,9 @@ def _compute_global_kdens(field_kdens):
     return global_kdens
 
 
-def _apply_variables_filter(field_kdens, field_k_record, variables, source):
+def _apply_variables_filter(field_kdens: dict, field_k_record: dict,
+                            variables: "list[str]",
+                            source: str) -> "tuple[dict, dict]":
     """Return filtered copies of field_kdens and field_k_record.
 
     Emits a warning for any requested variable not present in *source*.
@@ -380,7 +388,10 @@ def _apply_variables_filter(field_kdens, field_k_record, variables, source):
     )
 
 
-def _build_mf_lazy(basenames, metas, grid_ds, endian, variables=None, time_chunk=1):
+def _build_mf_lazy(basenames: "list[str]", metas: "list[dict]",
+                   grid_ds: "xr.Dataset | None", endian: str,
+                   variables: "list[str] | None" = None,
+                   time_chunk: int = 1) -> xr.Dataset:
     """Build a combined lazy Dataset from pre-parsed per-file metadata.
 
     Constructs Dask arrays directly rather than calling xr.concat, avoiding
@@ -486,7 +497,9 @@ def _build_mf_lazy(basenames, metas, grid_ds, endian, variables=None, time_chunk
     return ds
 
 
-def read_archv(basename, grid_ds=None, endian="big", chunks=None, variables=None):
+def read_archv(basename: str, grid_ds: "xr.Dataset | None" = None,
+               endian: str = "big", chunks: Any = None,
+               variables: "list[str] | None" = None) -> xr.Dataset:
     """Read a HYCOM archive ``.ab`` file pair into an ``xr.Dataset``.
 
     Parameters
@@ -592,7 +605,7 @@ def read_archv(basename, grid_ds=None, endian="big", chunks=None, variables=None
     return ds
 
 
-def read_grid(basename, endian="big"):
+def read_grid(basename: str, endian: str = "big") -> xr.Dataset:
     """Read a HYCOM ``regional.grid`` ``.ab`` file pair into an ``xr.Dataset``."""
     gf = ABFileGrid(basename, "r", endian=endian)
     data_vars = {}
@@ -607,7 +620,8 @@ def read_grid(basename, endian="big"):
     return xr.Dataset(data_vars)
 
 
-def read_bathy(basename, grid_ds, endian="big"):
+def read_bathy(basename: str, grid_ds: xr.Dataset,
+               endian: str = "big") -> xr.Dataset:
     """Read a HYCOM bathymetry ``.ab`` file pair into an ``xr.Dataset``.
 
     *grid_ds* is required to supply ``idm`` / ``jdm`` (not stored in the

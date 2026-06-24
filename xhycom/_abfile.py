@@ -4,16 +4,19 @@ Bundled from the abfile package (https://github.com/NoraLoose/NERSC-HYCOM-CICE),
 originally authored by Knut Lisaeter, MIT licence.  Included here so that
 xhycom has no external install-time dependencies beyond numpy/xarray/cftime.
 """
+from __future__ import annotations
+
 import logging
 import re
 import struct
 import sys
+from typing import Any, Callable
 
 import numpy
 
 logger = logging.getLogger(__name__)
 
-grid_ordered_fieldnames = [
+grid_ordered_fieldnames: list[str] = [
     "plon", "plat", "qlon", "qlat", "ulon", "ulat", "vlon", "vlat", "pang",
     "scpx", "scpy", "scqx", "scqy", "scux", "scuy", "scvx", "scvy", "cori", "pasp",
 ]
@@ -32,7 +35,9 @@ class AFile:
 
     huge = 2.0 ** 100
 
-    def __init__(self, idm, jdm, filename, action, mask=False, real4=True, endian="big"):
+    def __init__(self, idm: int, jdm: int, filename: str, action: str,
+                 mask: bool = False, real4: bool = True,
+                 endian: str = "big") -> None:
         self._idm = idm
         self._jdm = jdm
         self._filename = filename
@@ -54,7 +59,7 @@ class AFile:
         self._spval = 2 ** 100.0
         self._filea = open(self._filename, self._action + "b")
 
-    def read_record(self, record):
+    def read_record(self, record: int) -> "numpy.ma.MaskedArray":
         self.seekrecord(record)
         struct_fmt = "f" if self._real4 else "d"
         mydtype = numpy.dtype("%s%s" % (self._endian_structfmt, struct_fmt))
@@ -63,30 +68,31 @@ class AFile:
         w.shape = (self.jdm, self.idm)
         return numpy.ma.masked_where(w > self.huge * 0.5, w)
 
-    def seekrecord(self, record):
+    def seekrecord(self, record: int) -> None:
         nbytes = 4 if self._real4 else 8
         self._filea.seek(int(record * self.n2drec * nbytes))
 
-    def close(self):
+    def close(self) -> None:
         self._filea.close()
 
     @property
-    def n2drec(self):
+    def n2drec(self) -> int:
         return self._n2drec
 
     @property
-    def idm(self):
+    def idm(self) -> int:
         return self._idm
 
     @property
-    def jdm(self):
+    def jdm(self) -> int:
         return self._jdm
 
 
 class ABFile:
     """Base class for HYCOM .a/.b file pairs."""
 
-    def __init__(self, basename, action, mask=False, real4=True, endian="big"):
+    def __init__(self, basename: str, action: str, mask: bool = False,
+                 real4: bool = True, endian: str = "big") -> None:
         self._basename = ABFile.strip_ab_ending(basename)
         self._action = action
         self._fileb = open(self._basename + ".b", self._action)
@@ -96,7 +102,8 @@ class ABFile:
         self._endian = endian
         self._firstwrite = True
 
-    def scanitem(self, item=None, conversion=None):
+    def scanitem(self, item: "str | None" = None,
+                 conversion: "Callable[[str], Any] | None" = None) -> tuple:
         line = self._fileb.readline().strip()
         if item is not None:
             m = re.match("^(.*)'(%-6s)'[ =]*" % item, line)
@@ -107,10 +114,10 @@ class ABFile:
             return m.group(2), value
         return None, None
 
-    def readline(self):
+    def readline(self) -> str:
         return self._fileb.readline()
 
-    def _open_filea_if_necessary(self, field):
+    def _open_filea_if_necessary(self, field: numpy.ndarray) -> None:
         if self._filea is None:
             self._jdm, self._idm = field.shape
             self._filea = AFile(
@@ -118,29 +125,29 @@ class ABFile:
                 self._action, mask=self._mask, real4=self._real4, endian=self._endian,
             )
 
-    def close(self):
+    def close(self) -> None:
         if self._filea is not None:
             self._filea.close()
         self._fileb.close()
 
     @property
-    def idm(self):
+    def idm(self) -> int:
         return self._idm
 
     @property
-    def jdm(self):
+    def jdm(self) -> int:
         return self._jdm
 
     @property
-    def fields(self):
+    def fields(self) -> dict:
         return self._fields
 
     @property
-    def fieldnames(self):
+    def fieldnames(self) -> set:
         return set(elem["field"] for elem in self._fields.values())
 
     @classmethod
-    def strip_ab_ending(cls, fname):
+    def strip_ab_ending(cls, fname: str) -> str:
         m = re.match(r"^(.*)(\.[ab]$)", fname)
         return m.group(1) if m else fname
 
@@ -148,7 +155,9 @@ class ABFile:
 class ABFileGrid(ABFile):
     """HYCOM regional.grid .a/.b file pair."""
 
-    def __init__(self, basename, action, mask=False, real4=True, endian="big", mapflg=-1):
+    def __init__(self, basename: str, action: str, mask: bool = False,
+                 real4: bool = True, endian: str = "big",
+                 mapflg: int = -1) -> None:
         super().__init__(basename, action, mask=mask, real4=real4, endian=endian)
         self._mapflg = mapflg
         if action == "r":
@@ -156,12 +165,12 @@ class ABFileGrid(ABFile):
             self.read_field_info()
             self._open_filea_if_necessary(numpy.zeros((self._jdm, self._idm)))
 
-    def read_header(self):
+    def read_header(self) -> None:
         _, self._idm = self.scanitem(item="idm", conversion=int)
         _, self._jdm = self.scanitem(item="jdm", conversion=int)
         _, self._mapflg = self.scanitem(item="mapflg", conversion=int)
 
-    def read_field_info(self):
+    def read_field_info(self) -> None:
         self._fields = {}
         line = self.readline().strip()
         i = 0
@@ -174,7 +183,7 @@ class ABFileGrid(ABFile):
             i += 1
             line = self.readline().strip()
 
-    def read_field(self, fieldname):
+    def read_field(self, fieldname: str):
         for i, d in self._fields.items():
             if d["field"] == fieldname:
                 return self._filea.read_record(i)
@@ -184,8 +193,9 @@ class ABFileGrid(ABFile):
 class ABFileBathy(ABFile):
     """HYCOM bathymetry .a/.b file pair."""
 
-    def __init__(self, basename, action, mask=True, real4=True, endian="big",
-                 idm=None, jdm=None):
+    def __init__(self, basename: str, action: str, mask: bool = True,
+                 real4: bool = True, endian: str = "big",
+                 idm: "int | None" = None, jdm: "int | None" = None) -> None:
         super().__init__(basename, action, mask=mask, real4=real4, endian=endian)
         if action == "r":
             if idm is None or jdm is None:
@@ -196,10 +206,10 @@ class ABFileBathy(ABFile):
             self.read_field_info()
             self._open_filea_if_necessary(numpy.zeros((self._jdm, self._idm)))
 
-    def read_header(self):
+    def read_header(self) -> None:
         self._header = [self.readline() for _ in range(5)]
 
-    def read_field_info(self):
+    def read_field_info(self) -> None:
         self._fields = {}
         line = self.readline().strip()
         i = 0
@@ -214,7 +224,7 @@ class ABFileBathy(ABFile):
             i += 1
             line = self.readline().strip()
 
-    def read_field(self, fieldname):
+    def read_field(self, fieldname: str):
         for i, d in self._fields.items():
             if d["field"] == fieldname:
                 return self._filea.read_record(i)
@@ -226,9 +236,12 @@ class ABFileArchv(ABFile):
 
     fieldkeys = ["field", "step", "day", "k", "dens", "min", "max"]
 
-    def __init__(self, basename, action, mask=True, real4=True, endian="big",
-                 iversn=None, iexpt=None, yrflag=None, idm=None, jdm=None,
-                 cline1="", cline2="", cline3=""):
+    def __init__(self, basename: str, action: str, mask: bool = True,
+                 real4: bool = True, endian: str = "big",
+                 iversn: "int | None" = None, iexpt: "int | None" = None,
+                 yrflag: "int | None" = None, idm: "int | None" = None,
+                 jdm: "int | None" = None, cline1: str = "", cline2: str = "",
+                 cline3: str = "") -> None:
         self._iversn = iversn
         self._iexpt = iexpt
         self._yrflag = yrflag
@@ -245,7 +258,7 @@ class ABFileArchv(ABFile):
             self.read_field_info()
             # .a file is opened lazily on the first read_record / read_field call.
 
-    def read_header(self):
+    def read_header(self) -> None:
         self._header = [self.readline() for _ in range(4)]
         _, self._iversn = self.scanitem(item="iversn", conversion=int)
         _, self._iexpt = self.scanitem(item="iexpt", conversion=int)
@@ -253,7 +266,7 @@ class ABFileArchv(ABFile):
         _, self._idm = self.scanitem(item="idm", conversion=int)
         _, self._jdm = self.scanitem(item="jdm", conversion=int)
 
-    def read_field_info(self):
+    def read_field_info(self) -> None:
         self._fields = {}
         self.readline()  # skip column-header line
         line = self.readline().strip()
@@ -269,19 +282,19 @@ class ABFileArchv(ABFile):
             i += 1
             line = self.readline().strip()
 
-    def _ensure_filea(self):
+    def _ensure_filea(self) -> None:
         if self._filea is None:
             self._filea = AFile(
                 self._idm, self._jdm, self._basename + ".a",
                 "r", mask=self._mask, real4=self._real4, endian=self._endian,
             )
 
-    def read_record(self, record_index):
+    def read_record(self, record_index: int) -> "numpy.ma.MaskedArray":
         """Read a 2-D slab from the .a file by absolute record index."""
         self._ensure_filea()
         return self._filea.read_record(record_index)
 
-    def read_field(self, fieldname, level):
+    def read_field(self, fieldname: str, level: int):
         self._ensure_filea()
         for i, d in self._fields.items():
             if d["field"] == fieldname and level == d["k"]:
@@ -290,17 +303,17 @@ class ABFileArchv(ABFile):
         return None
 
     @property
-    def fieldlevels(self):
+    def fieldlevels(self) -> set:
         return set(elem["k"] for elem in self._fields.values())
 
     @property
-    def iversn(self):
+    def iversn(self) -> "int | None":
         return self._iversn
 
     @property
-    def iexpt(self):
+    def iexpt(self) -> "int | None":
         return self._iexpt
 
     @property
-    def yrflag(self):
+    def yrflag(self) -> "int | None":
         return self._yrflag

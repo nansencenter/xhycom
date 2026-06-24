@@ -4,12 +4,14 @@ The ``forday`` function is adapted from modeltools.hycom._timetools
 (https://github.com/NoraLoose/NERSC-HYCOM-CICE), originally authored by
 Knut Lisaeter, MIT licence.
 """
+from __future__ import annotations
+
 import datetime
 
 import cftime
 
 # Map yrflag → CF calendar name
-_CALENDAR = {
+_CALENDAR: dict[int, str] = {
     0: "360_day",   # 360-day year, starts Jan 16
     1: "366_day",   # 366-day year, starts Jan 16
     2: "366_day",   # 366-day year, starts Jan  1
@@ -19,11 +21,11 @@ _CALENDAR = {
 }
 
 
-def _leapyear(iyr):
+def _leapyear(iyr: int) -> bool:
     return not (iyr % 4 == 0 and 1901 + iyr % 400 == 0 or iyr % 4 != 0)
 
 
-def _forday(dtime, yrflag):
+def _forday(dtime: float, yrflag: int) -> tuple[int, int, int]:
     """Convert a HYCOM model day to (year, day-of-year, hour).
 
     Adapted from the HYCOM Fortran routine ``forday`` via the modeltools
@@ -73,7 +75,7 @@ def _forday(dtime, yrflag):
     return iyear, iday, ihour
 
 
-def model_day_to_datetime(model_day, yrflag):
+def model_day_to_datetime(model_day: float, yrflag: int) -> "cftime.datetime":
     """Convert a HYCOM model day (float) to a ``cftime.datetime`` object.
 
     HYCOM stores time as a single floating-point "model day" whose meaning

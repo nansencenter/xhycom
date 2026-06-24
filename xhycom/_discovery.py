@@ -1,4 +1,6 @@
 """File discovery helpers for HYCOM archive datasets."""
+from __future__ import annotations
+
 import glob
 import os
 import re
@@ -7,7 +9,7 @@ import re
 _ARCHV_RE = re.compile(r"arch[vm]\.(\d{4})_(\d{3})(?:_(\d{2}))?$")
 
 
-def _sort_key(basename):
+def _sort_key(basename: str) -> tuple[int, int, int]:
     """Return a sortable (year, doy, hour) tuple from an archv basename."""
     m = _ARCHV_RE.search(os.path.basename(basename))
     if m:
@@ -15,7 +17,7 @@ def _sort_key(basename):
     return (0, 0, 0)
 
 
-def find_archv_files(path):
+def find_archv_files(path: str) -> list[str]:
     """Find HYCOM archive ``.ab`` file pairs and return sorted basenames.
 
     Scans *path* for files whose names match ``archv.YYYY_DDD_HH`` or
