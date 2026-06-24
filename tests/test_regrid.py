@@ -193,6 +193,20 @@ def test_weights_cache_auto_keyed_by_geometry(tmp_path, monkeypatch):
     assert (tmp_path / "manifest.json").exists()
 
 
+def test_drop_pole_removes_lat_90_row():
+    pytest.importorskip("xesmf")
+    ds = _curvilinear_ds()
+    lat = np.array([42.0, 60.0, 90.0])          # includes the exact pole row
+    lon = np.linspace(2, 8, 7)
+    full = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear")
+    assert 90.0 in full["lat"].values
+    dropped = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
+                                       drop_pole=True)
+    assert 90.0 not in dropped["lat"].values
+    assert dropped.sizes["lat"] == full.sizes["lat"] - 1
+    np.testing.assert_array_equal(dropped["lat"].values, [42.0, 60.0])
+
+
 def test_regrid_wrapper_end_to_end():
     pytest.importorskip("xesmf")
     ds = _curvilinear_ds()

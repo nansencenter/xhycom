@@ -265,6 +265,23 @@ def _apply_target_mask(out: xr.Dataset, tgt: xr.Dataset,
     return out.where(mask)
 
 
+def _drop_pole(out: xr.Dataset) -> xr.Dataset:
+    """Drop the exact geographic-pole rows (``|lat| = 90``) from the output.
+
+    A regular lat/lon grid is singular at the pole — every longitude collapses
+    to one physical point — and regular-grid ocean products carry no usable data
+    there (GLORYS, for instance, is NaN at 90 N while its land/sea ``mask`` still
+    marks the pole as sea, so masking alone won't remove it).  The remapped value
+    on that row is therefore meaningless; this drops it.
+    """
+    if "lat" not in out.dims:
+        return out
+    keep = np.abs(np.asarray(out["lat"].values)) < 90.0 - 1e-6
+    if keep.all():
+        return out
+    return out.isel(lat=keep)
+
+
 # ---------------------------------------------------------------------------
 # Velocities: de-stagger to T-points and rotate to east/north
 # ---------------------------------------------------------------------------
@@ -340,7 +357,8 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
                       mask_var: "str | None" = None,
                       apply_target_mask: bool = True,
                       subset_target: bool = True,
-                      weights: "str | os.PathLike | bool | None" = None) -> xr.Dataset:
+                      weights: "str | os.PathLike | bool | None" = None,
+                      drop_pole: bool = False) -> xr.Dataset:
     """Regrid a HYCOM Dataset from its curvilinear grid to a regular lon/lat grid.
 
     Velocities (if present) are first de-staggered to T-points and rotated to
@@ -399,6 +417,11 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         TP0/TP2/TP5 × target × method each get their own and are reused across
         files.  A path names an explicit file (reused if it exists, else
         created).  ``None`` (default) disables caching.
+    drop_pole : bool
+        If ``True``, drop the exact geographic-pole rows (``|lat| = 90``) from
+        the output.  A regular lat/lon grid is singular there and products like
+        GLORYS carry no data at 90 N (yet still mark it sea in their mask, so
+        masking alone won't remove it).  Default ``False``.
 
     Accepts a field either on hybrid layers (with ``thknss``) or already on
     fixed depth levels (a ``depth`` dimension, no ``thknss`` — e.g. the output
@@ -470,9 +493,13 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
     # Conservative remapping needs cell corner bounds on both grids.
     if conservative:
         src = _add_source_bounds(src, grid)
+        # Latitude edges must stay within [-90, 90]: midpoint extrapolation of a
+        # target row sitting on the pole (e.g. GLORYS' top row at exactly 90 N)
+        # otherwise lands a cell corner past the pole — an invalid spherical
+        # coordinate.  Clamping caps that cell at the pole instead.
         target_ds = target_ds.assign(
             lon_b=("lon_b", _edges_1d(lon)),
-            lat_b=("lat_b", _edges_1d(lat)),
+            lat_b=("lat_b", np.clip(_edges_1d(lat), -90.0, 90.0)),
         )
 
     # Thickness-weight layered fields for conservative remapping so the
@@ -519,6 +546,8 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
 
     if tgt is not None and apply_target_mask:
         out = _apply_target_mask(out, tgt, surface_only=True)
+    if drop_pole:
+        out = _drop_pole(out)
     return out
 
 
@@ -816,7 +845,7 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
            periodic: bool = False, mask_edges: bool = True,
            apply_target_mask: bool = True, subset_target: bool = True,
            weights: "str | os.PathLike | bool | None" = None,
-           order: str = "horizontal_first",
+           drop_pole: bool = False, order: str = "horizontal_first",
            variables: "list[str] | None" = None) -> xr.Dataset:
     """Regrid HYCOM output to a regular lon/lat/depth grid (lateral + vertical).
 
@@ -883,6 +912,10 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         auto-keys a file by grid geometry under ``$XHYCOM_CACHE_DIR``; a path
         names an explicit file; ``None`` (default) disables caching.  See
         :func:`regrid_horizontal`.
+    drop_pole : bool
+        If ``True``, drop the exact geographic-pole rows (``|lat| = 90``) from
+        the output — singular on a regular lat/lon grid and unused by products
+        like GLORYS.  Default ``False``.
     order : {"horizontal_first", "vertical_first"}
         Which step runs first (see above).  Default ``"horizontal_first"``
         (along-isopycnal, water-mass preserving).
@@ -931,4 +964,6 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         )
     if tgt is not None and apply_target_mask:
         ds = _apply_target_mask(ds, tgt, surface_only=False)
+    if drop_pole:
+        ds = _drop_pole(ds)
     return ds
