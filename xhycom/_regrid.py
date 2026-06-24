@@ -812,26 +812,28 @@ def layer_interface_depth(thknss: xr.DataArray, layer_dim: str = "k",
     for an xgcm conservative vertical transform.  Unit-aware like
     :func:`layer_centre_depth`, and carries the same tiny strictly-increasing
     ramp so massless layers don't collapse interfaces onto each other.
+
+    Stays lazy: built with xarray ``cumsum`` / ``pad`` so a dask-backed
+    ``thknss`` is never materialized.  Forcing it into a numpy array here would
+    eagerly load every time step at once (a regridded year of HYCOM is tens of
+    GB), which blows up the kernel during a :func:`regrid` call.
     """
     thknss_m = thknss if thknss.attrs.get("units") == "m" else thknss / _ONEM
 
-    other_dims = [d for d in thknss_m.dims if d != layer_dim]
-    vals = thknss_m.transpose(layer_dim, *other_dims).values
-    n = vals.shape[0]
-    # interfaces: 0 at the surface, then cumulative layer bottoms.
-    iface = np.concatenate(
-        [np.zeros((1,) + vals.shape[1:]), np.cumsum(vals, axis=0)], axis=0
-    )
-    ramp = (np.arange(n + 1) * 1e-4).reshape((n + 1,) + (1,) * len(other_dims))
-    iface = iface + ramp
+    n = thknss_m.sizes[layer_dim]
+    # interfaces: 0 at the surface, then cumulative layer bottoms.  Drop the
+    # layer coordinate first so pad doesn't introduce a NaN-valued one.
+    iface = thknss_m.cumsum(layer_dim)
+    if layer_dim in iface.coords:
+        iface = iface.drop_vars(layer_dim)
+    iface = iface.pad({layer_dim: (1, 0)}, constant_values=0.0)
+    iface = iface.rename({layer_dim: interface_dim})
 
-    coords = {d: thknss_m.coords[d] for d in other_dims if d in thknss_m.coords}
-    da = xr.DataArray(
-        iface, dims=[interface_dim] + other_dims, coords=coords, name="depth",
-        attrs={"long_name": "layer interface depth", "units": "m",
-               "positive": "down"},
-    )
-    return da
+    ramp = xr.DataArray(np.arange(n + 1) * 1e-4, dims=[interface_dim])
+    iface = (iface + ramp).rename("depth")
+    iface.attrs = {"long_name": "layer interface depth", "units": "m",
+                   "positive": "down"}
+    return iface
 
 
 # ---------------------------------------------------------------------------
