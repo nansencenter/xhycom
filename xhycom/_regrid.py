@@ -828,6 +828,11 @@ def layer_interface_depth(thknss: xr.DataArray, layer_dim: str = "k",
         iface = iface.drop_vars(layer_dim)
     iface = iface.pad({layer_dim: (1, 0)}, constant_values=0.0)
     iface = iface.rename({layer_dim: interface_dim})
+    # xgcm's conservative transform needs the vertical (interface) dim in a
+    # single chunk; pad would otherwise leave the prepended surface in its own
+    # chunk.  Cheap to coalesce (~tens of levels) and keeps the array lazy.
+    if iface.chunks is not None:
+        iface = iface.chunk({interface_dim: -1})
 
     ramp = xr.DataArray(np.arange(n + 1) * 1e-4, dims=[interface_dim])
     iface = (iface + ramp).rename("depth")
