@@ -6,12 +6,46 @@ layout is ``n2drec``-padded big-endian float32 records (see ``AFile``); the
 ``.b`` headers mirror exactly what ``ABFileGrid`` / ``ABFileBathy`` /
 ``ABFileArchv`` parse.
 """
+import os
+
 import numpy as np
 import pytest
 
 IDM, JDM = 5, 4               # tiny grid (x, y)
 SPVAL = 2.0 ** 100           # HYCOM land/pad fill value (read as masked)
 _N2DREC = ((IDM * JDM + 4095) // 4096) * 4096
+
+# Bundled real-data sample (a subset of the TP0 run; see tests/data/_subset_tp0.py).
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+
+class _TP0:
+    """Basenames (no extension) of the bundled real-data fixtures."""
+    dir = DATA_DIR
+    grid = os.path.join(DATA_DIR, "regional.grid")
+    bathy = os.path.join(DATA_DIR, "depth_TP0a1.00_01")
+    archive = os.path.join(DATA_DIR, "archm.2006_190_12")
+    idm, jdm, nlayers = 100, 110, 28
+
+
+@pytest.fixture(scope="session")
+def tp0():
+    """Paths to the bundled real TP0 ``.ab`` fixtures (skips if not present)."""
+    if not os.path.exists(_TP0.archive + ".a"):
+        pytest.skip("bundled TP0 real-data fixtures are not available")
+    return _TP0
+
+
+GLORYS_GRID = os.path.join(DATA_DIR, "glorys_grid_subset.nc")
+
+
+@pytest.fixture(scope="session")
+def glorys():
+    """Coarsened GLORYS regular target grid (skips if not present)."""
+    if not os.path.exists(GLORYS_GRID):
+        pytest.skip("bundled GLORYS target-grid fixture is not available")
+    import xarray as xr
+    return xr.open_dataset(GLORYS_GRID)
 
 
 def _write_a(path_a, arrays):

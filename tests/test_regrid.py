@@ -49,7 +49,7 @@ def test_layer_centre_depth_strictly_increasing_with_massless_layers():
 def test_regrid_vertical_recovers_layer_centres():
     pytest.importorskip("xgcm")
     ds, z_centre = _column_ds()
-    out = xhycom.regrid_vertical(ds, depth=z_centre)
+    out = xhycom.regrid_vertical(ds, depth=z_centre, method="linear")
     expected = 20.0 - 0.1 * z_centre
     got = out["temp"].isel(y=0, x=0).values
     np.testing.assert_allclose(got, expected, atol=1e-3)
@@ -60,7 +60,7 @@ def test_regrid_vertical_recovers_layer_centres():
 def test_regrid_vertical_linear_interpolation():
     pytest.importorskip("xgcm")
     ds, _ = _column_ds()  # centres 5,15,25,35,45 ; temp linear in z
-    out = xhycom.regrid_vertical(ds, depth=[10.0, 20.0, 30.0])
+    out = xhycom.regrid_vertical(ds, depth=[10.0, 20.0, 30.0], method="linear")
     # linear field -> interpolated values lie exactly on the line
     np.testing.assert_allclose(
         out["temp"].isel(y=0, x=0).values, [19.0, 18.0, 17.0], atol=1e-2,
@@ -70,7 +70,8 @@ def test_regrid_vertical_linear_interpolation():
 def test_regrid_vertical_masks_below_bottom():
     pytest.importorskip("xgcm")
     ds, _ = _column_ds()  # bottom centre ~45 m
-    out = xhycom.regrid_vertical(ds, depth=[100.0], mask_edges=True)
+    out = xhycom.regrid_vertical(ds, depth=[100.0], method="linear",
+                                 mask_edges=True)
     assert np.isnan(out["temp"].isel(y=0, x=0).values).all()
 
 
@@ -78,7 +79,7 @@ def test_regrid_vertical_drops_thknss_and_keeps_2d():
     pytest.importorskip("xgcm")
     ds, _ = _column_ds()
     ds["srfhgt"] = xr.DataArray(np.ones((3, 4)), dims=("y", "x"))
-    out = xhycom.regrid_vertical(ds, depth=[5, 15])
+    out = xhycom.regrid_vertical(ds, depth=[5, 15], method="linear")
     assert "thknss" not in out
     assert "srfhgt" in out and "depth" not in out["srfhgt"].dims
 
@@ -139,7 +140,8 @@ def test_regrid_horizontal_recovers_field():
     ds = _curvilinear_ds()
     tgt_lon = np.linspace(2, 8, 7)
     tgt_lat = np.linspace(42, 48, 7)
-    out = xhycom.regrid_horizontal(ds, lon=tgt_lon, lat=tgt_lat)
+    out = xhycom.regrid_horizontal(ds, lon=tgt_lon, lat=tgt_lat,
+                                   method="bilinear")
     # temp == lat everywhere; bilinear must recover lat at interior points
     expected = np.broadcast_to(tgt_lat[:, None], (7, 7))
     # ESMF bilinear uses great-circle weighting, so recovery is ~1e-3, not exact
@@ -148,14 +150,196 @@ def test_regrid_horizontal_recovers_field():
     )
 
 
+def test_subset_target_trims_to_source_bbox():
+    from xhycom._regrid import _subset_target
+    ds = _curvilinear_ds()                              # lon 0..10, lat 40..50
+    tlon = np.linspace(-180, 179, 720)
+    tlat = np.linspace(-80, 89, 680)
+    tgt = xr.Dataset(
+        {"mask": (("latitude", "longitude"), np.ones((tlat.size, tlon.size), "i1"))},
+        coords={"longitude": tlon, "latitude": tlat},
+    )
+    sub = _subset_target(tgt, ds, pad=1.0)
+    assert sub.sizes["longitude"] < tlon.size and sub.sizes["latitude"] < tlat.size
+    # Kept points reach the source edges (within the pad) and exclude the far field.
+    assert sub.longitude.min() < 1 and sub.longitude.max() > 9
+    assert sub.latitude.min() < 41 and sub.latitude.max() > 49
+    assert sub.longitude.max() < 20 and sub.latitude.max() < 60
+
+
+def test_weights_cache_reused_and_consistent(tmp_path):
+    pytest.importorskip("xesmf")
+    ds = _curvilinear_ds()
+    lon = np.linspace(2, 8, 7)
+    lat = np.linspace(42, 48, 7)
+    wfile = tmp_path / "w.nc"
+    first = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
+                                     weights=wfile)
+    assert wfile.exists()
+    second = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
+                                      weights=wfile)              # reuse path
+    np.testing.assert_array_equal(first["temp"].values, second["temp"].values)
+
+
+def test_weights_cache_auto_keyed_by_geometry(tmp_path, monkeypatch):
+    pytest.importorskip("xesmf")
+    monkeypatch.setenv("XHYCOM_CACHE_DIR", str(tmp_path))
+    ds = _curvilinear_ds()
+    lon = np.linspace(2, 8, 7)
+    lat = np.linspace(42, 48, 7)
+    xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear", weights=True)
+    files = [p.name for p in tmp_path.glob("weights_*.nc")]
+    assert len(files) == 1 and files[0].startswith("weights_12x11_to_7x7_bilinear_")
+    assert (tmp_path / "manifest.json").exists()
+
+
 def test_regrid_wrapper_end_to_end():
     pytest.importorskip("xesmf")
     ds = _curvilinear_ds()
     out = xhycom.regrid(
         ds, lon=np.linspace(2, 8, 5), lat=np.linspace(42, 48, 5),
-        depth=[5.0, 15.0, 25.0],
+        depth=[5.0, 15.0, 25.0], method="bilinear", z_method="linear",
     )
     assert set(out["temp"].dims) == {"depth", "lat", "lon"}
     # temp independent of depth (== lat) within the column range
     col = out["temp"].isel(lat=2, lon=2).values
     assert np.allclose(col, col[0], atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# Conservative regridding (the default) — conservation properties
+# ---------------------------------------------------------------------------
+def test_regrid_vertical_conservative_preserves_column_integral():
+    pytest.importorskip("xgcm")
+    ds, z_centre = _column_ds()                       # 5 layers x 10 m
+    h = 10.0
+    src_integral = float((ds["temp"].isel(y=0, x=0).values * h).sum())
+    # coarser target bins centred at 12.5 and 37.5 -> edges [0, 25, 50]
+    out = xhycom.regrid_vertical(ds, depth=[12.5, 37.5], method="conservative",
+                                 mask_edges=False)
+    prof = out["temp"].isel(y=0, x=0).values
+    tgt_integral = float((prof * 25.0).sum())
+    np.testing.assert_allclose(tgt_integral, src_integral, rtol=1e-4)
+
+
+def test_regrid_vertical_conservative_constant():
+    pytest.importorskip("xgcm")
+    ds, _ = _column_ds()
+    ds["temp"] = xr.full_like(ds["temp"], 7.0)
+    out = xhycom.regrid_vertical(ds, depth=[10.0, 30.0], method="conservative",
+                                 mask_edges=False)
+    np.testing.assert_allclose(out["temp"].isel(y=0, x=0).values, 7.0, atol=1e-6)
+
+
+def _curvilinear_grid(dx=0.5, nx=20, ny=20, lon0=0.0, lat0=40.0):
+    """Regular grid as 2-D centres (plon/plat) + SW corners (qlon/qlat)."""
+    lonc = lon0 + (np.arange(nx) + 0.5) * dx
+    latc = lat0 + (np.arange(ny) + 0.5) * dx
+    lon2d, lat2d = np.meshgrid(lonc, latc)
+    lonq = lon0 + np.arange(nx) * dx
+    latq = lat0 + np.arange(ny) * dx
+    qlon2d, qlat2d = np.meshgrid(lonq, latq)
+    grid = xr.Dataset({"qlon": (("y", "x"), qlon2d),
+                       "qlat": (("y", "x"), qlat2d),
+                       "plon": (("y", "x"), lon2d),
+                       "plat": (("y", "x"), lat2d)})
+    return grid, lon2d, lat2d
+
+
+def test_regrid_horizontal_conservative_preserves_constant():
+    pytest.importorskip("xesmf")
+    grid, lon2d, lat2d = _curvilinear_grid()
+    ny, nx = lat2d.shape
+    temp = xr.DataArray(np.full((1, ny, nx), 5.0), dims=("k", "y", "x"),
+                        coords={"k": [1]})
+    ds = xr.Dataset({"temp": temp}).assign_coords(
+        lon=(("y", "x"), lon2d), lat=(("y", "x"), lat2d))
+    out = xhycom.regrid_horizontal(
+        ds, lon=np.linspace(2, 8, 9), lat=np.linspace(42, 48, 9),
+        grid=grid, method="conservative",
+    )
+    v = out["temp"].isel(k=0).values
+    np.testing.assert_allclose(v[np.isfinite(v)], 5.0, atol=1e-6)
+
+
+def test_regrid_horizontal_conservative_is_thickness_weighted():
+    """A constant tracer is preserved even where layer thickness varies."""
+    pytest.importorskip("xesmf")
+    grid, lon2d, lat2d = _curvilinear_grid()
+    ny, nx = lat2d.shape
+    # thickness ramps across the domain; tracer is uniform.
+    h = np.broadcast_to((10.0 + (lat2d - 40.0)) * _ONEM, (1, ny, nx)).copy()
+    thknss = xr.DataArray(h, dims=("k", "y", "x"), coords={"k": [1]})
+    temp = xr.DataArray(np.full((1, ny, nx), 3.0), dims=("k", "y", "x"),
+                        coords={"k": [1]})
+    ds = xr.Dataset({"temp": temp, "thknss": thknss}).assign_coords(
+        lon=(("y", "x"), lon2d), lat=(("y", "x"), lat2d))
+    out = xhycom.regrid_horizontal(
+        ds, lon=np.linspace(2, 8, 9), lat=np.linspace(42, 48, 9),
+        grid=grid, method="conservative",
+    )
+    v = out["temp"].isel(k=0).values
+    np.testing.assert_allclose(v[np.isfinite(v)], 3.0, atol=1e-6)
+
+
+def test_regrid_horizontal_accepts_depth_levels():
+    """On fixed depth levels (no thknss) a constant field is preserved, and a
+    NaN below-bottom patch does not contaminate a wet neighbour."""
+    pytest.importorskip("xesmf")
+    grid, lon2d, lat2d = _curvilinear_grid()
+    ny, nx = lat2d.shape
+    temp = np.full((2, ny, nx), 4.0)
+    temp[1, : ny // 2, :] = np.nan          # deep level dry over half the domain
+    ds = xr.Dataset(
+        {"temp": (("depth", "y", "x"), temp)},
+    ).assign_coords(lon=(("y", "x"), lon2d), lat=(("y", "x"), lat2d),
+                    depth=("depth", [5.0, 50.0]))
+    out = xhycom.regrid_horizontal(
+        ds, lon=np.linspace(2, 8, 9), lat=np.linspace(42, 48, 9),
+        grid=grid, method="conservative",
+    )
+    assert set(out["temp"].dims) == {"depth", "lat", "lon"}
+    v = out["temp"].values
+    np.testing.assert_allclose(v[np.isfinite(v)], 4.0, atol=1e-6)
+    # the wet half of the deep level still carries the constant (not NaN'd).
+    assert np.isfinite(out["temp"].isel(depth=1).sel(lat=47, method="nearest")).any()
+
+
+@pytest.mark.parametrize("order", ["horizontal_first", "vertical_first"])
+def test_regrid_wrapper_conservative_end_to_end(order):
+    """Either order, both steps conservative, preserves a constant field."""
+    pytest.importorskip("xesmf")
+    pytest.importorskip("xgcm")
+    grid, lon2d, lat2d = _curvilinear_grid()
+    ny, nx = lat2d.shape
+    nlayers = 4
+    thknss = xr.DataArray(
+        np.full((nlayers, ny, nx), 10.0 * _ONEM), dims=("k", "y", "x"),
+        coords={"k": np.arange(1, nlayers + 1)})
+    temp = xr.DataArray(
+        np.full((nlayers, ny, nx), 6.0), dims=("k", "y", "x"),
+        coords={"k": np.arange(1, nlayers + 1)})
+    ds = xr.Dataset({"thknss": thknss, "temp": temp}).assign_coords(
+        lon=(("y", "x"), lon2d), lat=(("y", "x"), lat2d))
+    out = xhycom.regrid(
+        ds, lon=np.linspace(2, 8, 9), lat=np.linspace(42, 48, 9),
+        depth=[5.0, 15.0, 25.0], grid=grid, order=order,
+    )
+    assert set(out["temp"].dims) == {"depth", "lat", "lon"}
+    v = out["temp"].values
+    np.testing.assert_allclose(v[np.isfinite(v)], 6.0, atol=1e-6)
+
+
+def test_regrid_invalid_order():
+    ds = _curvilinear_ds()
+    with pytest.raises(ValueError, match="order"):
+        xhycom.regrid(ds, lon=[3.0], lat=[45.0], depth=[5.0], order="sideways")
+
+
+def test_regrid_horizontal_conservative_requires_grid():
+    pytest.importorskip("xesmf")
+    ds = _curvilinear_ds()
+    with pytest.raises(ValueError, match="qlon"):
+        xhycom.regrid_horizontal(ds, lon=np.linspace(2, 8, 5),
+                                 lat=np.linspace(42, 48, 5),
+                                 method="conservative")
