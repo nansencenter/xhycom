@@ -630,6 +630,13 @@ def _ocean_mask(ds: xr.Dataset,
     if mask_var is None or mask_var not in ds:
         return None
     da = ds[mask_var]
+    # The HYCOM land mask is static in time, so a single step is enough.
+    # Reducing over `time` would force reading the *entire* variable (every
+    # step — tens of GB for a year) just to build a 2-D mask, which xESMF then
+    # pulls in eagerly when the regridder is constructed — swamping any
+    # weight-cache saving.  Take the first step instead.
+    if "time" in da.dims:
+        da = da.isel(time=0)
     reduce_dims = [d for d in da.dims if d not in ("y", "x")]
     finite = np.isfinite(da)
     if reduce_dims:
