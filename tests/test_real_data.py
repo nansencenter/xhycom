@@ -210,6 +210,24 @@ def test_regrid_horizontal(real_ds):
     assert "lon_u" not in out.coords and "lon_v" not in out.coords
 
 
+def test_regrid_near_pole_full_coverage_no_overshoot(real_ds):
+    """The TOPAZ confmap grid reaches ~89.6 N with no fold/zipper, so a
+    conservative remap of its near-pole rows is fully covered (no seam gap) and
+    bounded (no overshoot from malformed near-pole cells)."""
+    pytest.importorskip("xesmf")
+    ds, grid = real_ds
+    lon = np.arange(-180.0, 180.0, 1.0)
+    lat = np.arange(86.0, 89.51, 0.5)            # within the source's ~89.58 N max
+    out = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, grid=grid,
+                                   method="conservative")
+    t = out["temp"].isel(time=0, k=0).values
+    # The 89.5 N row is fully populated across all longitudes (no fold seam).
+    assert np.isfinite(t[-1]).all()
+    # Conservative means cannot exceed the source range (no malformed-cell blowup).
+    tmin, tmax = float(np.nanmin(ds["temp"])), float(np.nanmax(ds["temp"]))
+    assert np.nanmin(t) >= tmin - 1e-3 and np.nanmax(t) <= tmax + 1e-3
+
+
 def test_regrid_end_to_end(real_ds):
     pytest.importorskip("xesmf")
     pytest.importorskip("xgcm")

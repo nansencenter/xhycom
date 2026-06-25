@@ -4,7 +4,29 @@ import pytest
 import xarray as xr
 
 import xhycom
-from xhycom._regrid import _ONEM, _uv_to_east_north, layer_centre_depth
+from xhycom._regrid import (
+    _ONEM, _uv_to_east_north, layer_centre_depth, layer_interface_depth,
+)
+
+
+def _explode_on_compute(shape, chunks):
+    """A dask-backed array that raises if any block is ever computed.
+
+    Building the graph (cumsum, pad, transform, ...) is fine; only an
+    accidental eager materialization — a stray ``.values`` / ``.compute()`` —
+    trips the guard.  Lets a test assert that an operation stays lazy without
+    needing large data: a regridded HYCOM year is tens of GB, so eagerly
+    loading every time step at construction time (the bug this guards against)
+    crashes the kernel.
+    """
+    dka = pytest.importorskip("dask.array")
+
+    def _boom(_block):
+        raise AssertionError("array was computed — expected a lazy graph")
+
+    base = dka.zeros(shape, chunks=chunks)
+    return base.map_blocks(_boom, dtype=base.dtype,
+                           meta=np.empty((0,), base.dtype))
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +63,43 @@ def test_layer_centre_depth_strictly_increasing_with_massless_layers():
                           coords={"k": np.arange(1, 6)})
     z = layer_centre_depth(thknss).isel(y=0, x=0).values
     assert np.all(np.diff(z) > 0), "depths must be strictly increasing"
+
+
+# ---------------------------------------------------------------------------
+# Laziness: construction must not materialize the data (kernel-OOM guard)
+# ---------------------------------------------------------------------------
+def test_layer_interface_depth_stays_lazy():
+    """A dask-backed thknss yields a dask-backed result — never a numpy load.
+
+    Regression guard: the conservative path once forced ``thknss.values`` here,
+    which pulls every time step into RAM at once.
+    """
+    pytest.importorskip("dask")
+    thk = xr.DataArray(
+        _explode_on_compute((6, 5, 4, 4), (1, 5, 4, 4)),
+        dims=("time", "k", "y", "x"), attrs={"units": "m"},
+    )
+    iface = layer_interface_depth(thk)              # must not raise (no compute)
+    assert iface.chunks is not None                 # still lazy
+    assert iface.sizes["z_i"] == 6                  # n_layers + 1
+
+
+def test_regrid_vertical_conservative_builds_lazily():
+    """Constructing a conservative vertical regrid triggers no eager compute."""
+    pytest.importorskip("xgcm")
+    pytest.importorskip("dask")
+    ds = xr.Dataset({
+        "thknss": xr.DataArray(
+            _explode_on_compute((6, 5, 4, 4), (1, 5, 4, 4)),
+            dims=("time", "k", "y", "x"), attrs={"units": "m"}),
+        "temp": xr.DataArray(
+            _explode_on_compute((6, 5, 4, 4), (1, 5, 4, 4)),
+            dims=("time", "k", "y", "x")),
+    })
+    # Building the graph must not compute anything; the result stays lazy.
+    out = xhycom.regrid_vertical(ds, depth=[5.0, 15.0, 25.0],
+                                 method="conservative")
+    assert out["temp"].chunks is not None
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +209,41 @@ def test_regrid_horizontal_recovers_field():
     )
 
 
+def test_regrid_horizontal_builds_mask_from_one_timestep():
+    """The source ocean mask must come from a single time step.
+
+    Guards two bugs the single-step fixtures above can't see, both on a
+    multi-step source:
+
+    1. *Performance* — reducing the mask over ``time`` (``isfinite(temp).any``)
+       forces xESMF to read **every** step when it materializes the mask at
+       construction (tens of GB for a HYCOM year), which is what made the weight
+       cache look useless.
+    2. *Correctness* — slicing ``time=0`` without dropping the scalar coord
+       makes ``assign_coords(mask=...)`` raise "dimension 'time' already exists
+       as a scalar variable".
+
+    Here only ``time=0`` is real; later steps explode if ever computed, so a
+    mask that touches them fails loudly.
+    """
+    pytest.importorskip("xesmf")
+    dka = pytest.importorskip("dask.array")
+    base = _curvilinear_ds(nlayers=2)
+    nk, ny, nx = (base.sizes[d] for d in ("k", "y", "x"))
+    good = dka.from_array(base["temp"].values[None], chunks=(1, nk, ny, nx))
+    boom = _explode_on_compute((3, nk, ny, nx), (1, nk, ny, nx))
+    temp = dka.concatenate([good, boom], axis=0)          # time=4, only t=0 safe
+    ds = base.assign(temp=(("time", "k", "y", "x"), temp))
+
+    out = xhycom.regrid_horizontal(
+        ds, lon=np.linspace(2, 8, 7), lat=np.linspace(42, 48, 7),
+        method="bilinear",
+    )
+    # Built without the scalar-time crash; the mask read only t=0 (no boom).
+    assert "time" in out["temp"].dims
+    assert np.isfinite(out["temp"].isel(time=0, k=0).values).any()
+
+
 def test_subset_target_trims_to_source_bbox():
     from xhycom._regrid import _subset_target
     ds = _curvilinear_ds()                              # lon 0..10, lat 40..50
@@ -193,18 +287,22 @@ def test_weights_cache_auto_keyed_by_geometry(tmp_path, monkeypatch):
     assert (tmp_path / "manifest.json").exists()
 
 
-def test_drop_pole_removes_lat_90_row():
+def test_nan_pole_blanks_lat_90_row_by_default():
     pytest.importorskip("xesmf")
     ds = _curvilinear_ds()
     lat = np.array([42.0, 60.0, 90.0])          # includes the exact pole row
     lon = np.linspace(2, 8, 7)
-    full = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear")
-    assert 90.0 in full["lat"].values
-    dropped = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
-                                       drop_pole=True)
-    assert 90.0 not in dropped["lat"].values
-    assert dropped.sizes["lat"] == full.sizes["lat"] - 1
-    np.testing.assert_array_equal(dropped["lat"].values, [42.0, 60.0])
+    # Default (nan_pole=True): the grid is unchanged but the pole row is NaN.
+    out = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear")
+    np.testing.assert_array_equal(out["lat"].values, lat)   # row kept
+    assert bool(np.isnan(out["temp"].sel(lat=90.0)).all())  # but blanked
+    assert not bool(np.isnan(out["temp"].sel(lat=60.0)).all())
+
+    # nan_pole=False keeps the raw remapped pole value.
+    raw = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
+                                   nan_pole=False)
+    np.testing.assert_array_equal(raw["lat"].values, lat)
+    assert bool(np.isfinite(raw["temp"].sel(lat=90.0)).any())
 
 
 def test_regrid_wrapper_end_to_end():
@@ -357,3 +455,48 @@ def test_regrid_horizontal_conservative_requires_grid():
         xhycom.regrid_horizontal(ds, lon=np.linspace(2, 8, 5),
                                  lat=np.linspace(42, 48, 5),
                                  method="conservative")
+
+
+# ---------------------------------------------------------------------------
+# regrid_to_hycom: regular lon/lat product -> HYCOM curvilinear grid
+# ---------------------------------------------------------------------------
+def _regular_product(value):
+    """A regular lon/lat product (GLORYS-style names) spanning the grid below."""
+    lon = np.linspace(-2, 12, 30)
+    lat = np.linspace(38, 52, 30)
+    field = value(lat, lon) if callable(value) else np.full((30, 30), value)
+    temp = xr.DataArray(field, dims=("latitude", "longitude"),
+                        coords={"latitude": lat, "longitude": lon})
+    return xr.Dataset({"temp": temp})
+
+
+def test_regrid_to_hycom_recovers_field():
+    pytest.importorskip("xesmf")
+    grid, lon2d, lat2d = _curvilinear_grid()           # centres inside [38, 52]
+    product = _regular_product(lambda lat, lon: np.broadcast_to(lat[:, None], (30, 30)))
+    out = xhycom.regrid_to_hycom(product, grid=grid, method="bilinear")
+    # temp == latitude; bilinear must recover the HYCOM cell latitudes.
+    assert set(out["temp"].dims) == {"y", "x"}
+    np.testing.assert_allclose(out["temp"].values, lat2d, atol=1e-3)
+
+
+def test_regrid_to_hycom_conservative_preserves_constant():
+    pytest.importorskip("xesmf")
+    grid, _, _ = _curvilinear_grid()
+    out = xhycom.regrid_to_hycom(_regular_product(7.0), grid=grid,
+                                 method="conservative")
+    v = out["temp"].values
+    np.testing.assert_allclose(v[np.isfinite(v)], 7.0, atol=1e-6)
+
+
+def test_regrid_to_hycom_applies_like_mask():
+    pytest.importorskip("xesmf")
+    grid, _, lat2d = _curvilinear_grid()
+    ny, nx = lat2d.shape
+    like_temp = xr.DataArray(np.ones((ny, nx)), dims=("y", "x"))
+    like_temp[0, 0] = np.nan                           # one land cell
+    like = xr.Dataset({"temp": like_temp})
+    out = xhycom.regrid_to_hycom(_regular_product(3.0), grid=grid,
+                                 method="bilinear", like=like)
+    assert np.isnan(out["temp"].values[0, 0])          # masked to land
+    assert np.isfinite(out["temp"].values[ny // 2, nx // 2])
