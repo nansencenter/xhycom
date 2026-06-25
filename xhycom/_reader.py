@@ -327,6 +327,7 @@ def _read_archv_meta(basename: str, endian: str = "big") -> "dict[str, Any]":
     yrflag = af.yrflag
     iversn = af.iversn
     iexpt = af.iexpt
+    is_mean = af.is_mean   # archm (mean archive) vs archv (instantaneous)
     first_rec = next(iter(af.fields.values())) if af.fields else {}
     model_day = first_rec.get("day")
 
@@ -346,6 +347,7 @@ def _read_archv_meta(basename: str, endian: str = "big") -> "dict[str, Any]":
         "iexpt": iexpt,
         "global_kdens": _compute_global_kdens(field_kdens),
         "time": time,
+        "is_mean": is_mean,
     }
 
 
@@ -479,7 +481,8 @@ def _build_mf_lazy(basenames: "list[str]", metas: "list[dict]",
             combined, dims=dims, coords=coords, attrs=attrs, name=uname,
         )
 
-    global_attrs = {"iversn": ref["iversn"], "iexpt": ref["iexpt"], "yrflag": ref["yrflag"]}
+    global_attrs = {"iversn": ref["iversn"], "iexpt": ref["iexpt"], "yrflag": ref["yrflag"],
+                    "archive_type": "mean" if ref.get("is_mean") else "instantaneous"}
     ds = xr.Dataset(data_vars, attrs=global_attrs)
 
     if any(t is not None for t in times):
@@ -525,7 +528,8 @@ def read_archv(basename: str, grid_ds: "xr.Dataset | None" = None,
 
     jdm, idm = meta["jdm"], meta["idm"]
     global_kdens = _compute_global_kdens(field_kdens)
-    global_attrs = {"iversn": meta["iversn"], "iexpt": meta["iexpt"], "yrflag": meta["yrflag"]}
+    global_attrs = {"iversn": meta["iversn"], "iexpt": meta["iexpt"], "yrflag": meta["yrflag"],
+                    "archive_type": "mean" if meta.get("is_mean") else "instantaneous"}
 
     if chunks is not None:
         try:

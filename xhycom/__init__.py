@@ -15,7 +15,7 @@ import xarray as xr
 from ._abfile import ABFile
 from ._discovery import find_archv_files
 from ._reader import detect_filetype, read_archv, read_bathy, read_grid, _read_archv_meta, _build_mf_lazy
-from ._regrid import regrid, regrid_horizontal, regrid_vertical
+from ._regrid import regrid, regrid_horizontal, regrid_vertical, regrid_to_hycom
 from ._postprocess import postprocess
 # Private alias so the public `postprocess` name can also be a keyword argument
 # on open_dataset / open_mfdataset without shadowing the function.
@@ -29,12 +29,40 @@ __all__ = [
     "regrid",
     "regrid_horizontal",
     "regrid_vertical",
+    "regrid_to_hycom",
 ]
 
 # A grid argument is either a path to ``regional.grid`` or a pre-loaded Dataset.
 GridArg = Union[str, xr.Dataset, None]
 # ``chunks`` is forwarded to ``Dataset.chunk`` (int, mapping, "auto", or None).
 Chunks = Union[int, dict, str, None]
+
+# Layer-velocity names and their barotropic partners.  ``postprocess`` turns the
+# baroclinic ``archv`` velocities into the total current by adding the barotropic
+# part, so when velocities are requested via ``variables=`` we must also read it.
+_VEL_TOTAL = ("u-vel.", "v-vel.")
+_VEL_BTROP = ("u_btrop", "v_btrop")
+
+
+def _augment_velocity_vars(variables: "list[str] | None", postprocess: bool):
+    """Pull in the barotropic velocity when velocities are requested + postprocess.
+
+    Returns ``(variables_to_read, auto_added)``; *auto_added* are barotropic
+    names added only to build the total current, which the caller drops after
+    postprocess so an explicit ``variables=`` list is honoured.
+    """
+    if not postprocess or variables is None:
+        return variables, []
+    if not set(variables) & set(_VEL_TOTAL):
+        return variables, []
+    auto = [b for b in _VEL_BTROP if b not in variables]
+    return list(variables) + auto, auto
+
+
+def _drop_auto(ds: xr.Dataset, auto: "list[str]") -> xr.Dataset:
+    """Drop the barotropic variables that were auto-added just to form the total."""
+    drop = [v for v in auto if v in ds.variables]
+    return ds.drop_vars(drop) if drop else ds
 
 
 def _load_grid(grid: GridArg, endian: str) -> "xr.Dataset | None":

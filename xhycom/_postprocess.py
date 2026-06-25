@@ -22,6 +22,8 @@ public :func:`xhycom.postprocess` so it can be applied to an existing Dataset.
 """
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import xarray as xr
 
@@ -63,12 +65,77 @@ def postprocess(ds: xr.Dataset) -> xr.Dataset:
         if name in ds.data_vars and ds[name].attrs.get("units") != units:
             ds[name] = _scale(ds[name], factor, units, long_name)
 
+    ds = _reconcile_velocities(ds)
+
     if "scpx" in ds and "scpy" in ds and "area" not in ds:
         ds["area"] = _grid_area(ds)
 
     if "depth" in ds and "landmask" not in ds:
         ds["landmask"] = _landmask(ds["depth"])
 
+    return ds
+
+
+# C-grid layer-velocity / barotropic pairs.  In an instantaneous ``archv`` the
+# layer velocity is baroclinic and the total current is ``component + barotropic``;
+# in a mean ``archm`` the layer velocity already includes the barotropic part.
+_VELOCITY_PAIRS = (("u-vel.", "u_btrop"), ("v-vel.", "v_btrop"))
+
+
+def _reconcile_velocities(ds: xr.Dataset) -> xr.Dataset:
+    """Make the layer velocities mean the same thing regardless of archive type.
+
+    HYCOM writes ``u-vel.``/``v-vel.`` differently depending on the file:
+
+    * instantaneous ``archv`` stores the **baroclinic** layer velocity, so the
+      total current is ``u-vel. + u_btrop`` (``mod_archiv.F``);
+    * mean ``archm`` stores the **total** — the barotropic part is summed in
+      while the online time mean is formed (``mod_mean.F``).
+
+    ``ds.attrs['archive_type']`` (set by the reader) says which.  For ``archv``
+    the barotropic component is added so the result is the total current either
+    way; for ``archm`` the fields are only annotated.  The per-variable
+    ``hycom_velocity`` attr makes this idempotent.  When the barotropic part is
+    absent (e.g. a surface-only archive, or a ``variables=`` subset that omitted
+    it) the field is left baroclinic and flagged, with a warning.
+    """
+    archive_type = ds.attrs.get("archive_type")
+    if archive_type is None:
+        return ds
+
+    for comp, btrop in _VELOCITY_PAIRS:
+        if comp not in ds.data_vars or ds[comp].attrs.get("hycom_velocity"):
+            continue
+        if archive_type == "instantaneous" and btrop in ds.data_vars:
+            attrs = dict(ds[comp].attrs)
+            attrs["hycom_velocity"] = "total"
+            attrs["comment"] = (
+                f"total current: baroclinic layer velocity (as stored in archv) "
+                f"+ barotropic {btrop}"
+            )
+            total = ds[comp] + ds[btrop]
+            total.attrs = attrs
+            ds[comp] = total
+        elif archive_type == "mean":
+            ds[comp].attrs["hycom_velocity"] = "total"
+            ds[comp].attrs.setdefault(
+                "comment",
+                "total current (baroclinic + barotropic); the barotropic part "
+                "was summed in when the archm time mean was formed",
+            )
+        else:  # instantaneous archive but no barotropic component available
+            ds[comp].attrs["hycom_velocity"] = "baroclinic"
+            ds[comp].attrs.setdefault(
+                "comment",
+                f"baroclinic layer velocity; add {btrop} for the total current "
+                "(barotropic component not present in this Dataset)",
+            )
+            warnings.warn(
+                f"{comp!r} is baroclinic and {btrop!r} is not present, so it was "
+                "left as-is; the total current is unavailable. Include "
+                f"{btrop!r} to get the total.",
+                stacklevel=3,
+            )
     return ds
 
 

@@ -268,7 +268,13 @@ class ABFileArchv(ABFile):
 
     def read_field_info(self) -> None:
         self._fields = {}
-        self.readline()  # skip column-header line
+        # Column-header line distinguishes a mean archive from an instantaneous
+        # one: archv writes "... model day", archm writes "... mean day".  This
+        # is the only in-file flag for it (filenames aside), and it matters for
+        # velocities (archv stores baroclinic, archm stores total) — see
+        # xhycom.postprocess.
+        colhdr = self.readline()
+        self._is_mean = "mean day" in colhdr
         line = self.readline().strip()
         i = 0
         while line:
