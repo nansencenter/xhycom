@@ -265,21 +265,27 @@ def _apply_target_mask(out: xr.Dataset, tgt: xr.Dataset,
     return out.where(mask)
 
 
-def _drop_pole(out: xr.Dataset) -> xr.Dataset:
-    """Drop the exact geographic-pole rows (``|lat| = 90``) from the output.
+def _nan_pole(out: xr.Dataset) -> xr.Dataset:
+    """Blank the exact geographic-pole rows (``|lat| = 90``) to NaN.
 
     A regular lat/lon grid is singular at the pole — every longitude collapses
     to one physical point — and regular-grid ocean products carry no usable data
     there (GLORYS, for instance, is NaN at 90 N while its land/sea ``mask`` still
     marks the pole as sea, so masking alone won't remove it).  The remapped value
-    on that row is therefore meaningless; this drops it.
+    on that row is therefore meaningless.
+
+    This sets those rows to NaN **without changing the grid**: the pole row is
+    kept, so the output stays the same shape as the target and a like-for-like
+    difference against it (e.g. ``hycom - glorys``) still aligns — GLORYS is
+    itself NaN at 90 N, so the blanked row simply drops out of the comparison.
+    Dropping the row instead would shrink the grid and break that alignment.
     """
     if "lat" not in out.dims:
         return out
     keep = np.abs(np.asarray(out["lat"].values)) < 90.0 - 1e-6
     if keep.all():
         return out
-    return out.isel(lat=keep)
+    return out.where(xr.DataArray(keep, dims="lat", coords={"lat": out["lat"]}))
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +364,7 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
                       apply_target_mask: bool = True,
                       subset_target: bool = True,
                       weights: "str | os.PathLike | bool | None" = None,
-                      drop_pole: bool = False) -> xr.Dataset:
+                      nan_pole: bool = True) -> xr.Dataset:
     """Regrid a HYCOM Dataset from its curvilinear grid to a regular lon/lat grid.
 
     Velocities (if present) are first de-staggered to T-points and rotated to
@@ -417,11 +423,14 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         TP0/TP2/TP5 × target × method each get their own and are reused across
         files.  A path names an explicit file (reused if it exists, else
         created).  ``None`` (default) disables caching.
-    drop_pole : bool
-        If ``True``, drop the exact geographic-pole rows (``|lat| = 90``) from
-        the output.  A regular lat/lon grid is singular there and products like
-        GLORYS carry no data at 90 N (yet still mark it sea in their mask, so
-        masking alone won't remove it).  Default ``False``.
+    nan_pole : bool
+        If ``True`` (default), set the exact geographic-pole rows
+        (``|lat| = 90``) to NaN.  A regular lat/lon grid is singular there — a
+        remap deposits a single, meaningless value — and products like GLORYS
+        carry no data at 90 N (yet still mark it sea in their mask, so masking
+        alone won't remove it).  The row is kept (not dropped), so the grid is
+        unchanged and stays aligned with the target for a like-for-like
+        difference.  Set ``False`` to keep the raw remapped pole value.
 
     Accepts a field either on hybrid layers (with ``thknss``) or already on
     fixed depth levels (a ``depth`` dimension, no ``thknss`` — e.g. the output
@@ -546,8 +555,8 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
 
     if tgt is not None and apply_target_mask:
         out = _apply_target_mask(out, tgt, surface_only=True)
-    if drop_pole:
-        out = _drop_pole(out)
+    if nan_pole:
+        out = _nan_pole(out)
     return out
 
 
@@ -636,12 +645,172 @@ def _ocean_mask(ds: xr.Dataset,
     # pulls in eagerly when the regridder is constructed — swamping any
     # weight-cache saving.  Take the first step instead.
     if "time" in da.dims:
-        da = da.isel(time=0)
+        da = da.isel(time=0, drop=True)   # drop=True: no scalar 'time' coord left
     reduce_dims = [d for d in da.dims if d not in ("y", "x")]
     finite = np.isfinite(da)
     if reduce_dims:
         finite = finite.any(reduce_dims)
     return finite.astype("int8")
+
+
+# ---------------------------------------------------------------------------
+# Reverse: a regular lon/lat product (e.g. GLORYS) -> HYCOM curvilinear grid
+# ---------------------------------------------------------------------------
+def _resolve_weights_to_hycom(weights: "str | os.PathLike | bool | None",
+                              src: xr.Dataset, grid: xr.Dataset,
+                              method: str, periodic: bool) -> "str | None":
+    """Weights-file path for the reverse (product -> HYCOM) remap, or ``None``.
+
+    Mirrors :func:`_resolve_weights` but keyed the other way round: the regular
+    *product* is the source and the HYCOM ``plon``/``plat`` grid is the target.
+    """
+    if weights is None or weights is False:
+        return None
+    if weights is True:
+        jdm, idm = np.asarray(grid["plat"].values).shape
+        nlat, nlon = int(src["lat"].size), int(src["lon"].size)
+        signature = (
+            f"prod:{nlat}x{nlon}:lon{_extent(src['lon'].values)}:"
+            f"lat{_extent(src['lat'].values)}|"
+            f"hycom:{idm}x{jdm}:lon{_extent(grid['plon'].values)}:"
+            f"lat{_extent(grid['plat'].values)}|{method}|periodic={bool(periodic)}"
+        )
+        key = hashlib.sha1(signature.encode()).hexdigest()[:8]
+        cache_dir = _cache_dir()
+        os.makedirs(cache_dir, exist_ok=True)
+        label = f"{nlat}x{nlon}_to_{idm}x{jdm}_{method}"
+        return os.path.join(cache_dir, f"weights_to_hycom_{label}_{key}.nc")
+    path = os.fspath(weights)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return path
+
+
+def regrid_to_hycom(product: "xr.Dataset | xr.DataArray | str",
+                    grid: "xr.Dataset | str", *,
+                    method: str = "bilinear", periodic: bool = False,
+                    like: "xr.Dataset | None" = None,
+                    weights: "str | os.PathLike | bool | None" = None,
+                    ) -> xr.Dataset:
+    """Regrid a regular lon/lat product onto the HYCOM curvilinear ``(y, x)`` grid.
+
+    The lateral inverse of :func:`regrid_horizontal`: a regular product such as
+    GLORYS is interpolated onto HYCOM's native curvilinear grid, so it can be
+    compared with the model *in the model's own space*.  This is the natural
+    direction when the model grid is coarser than the product (regridding HYCOM
+    up onto a finer product mostly interpolates, adding no information).
+
+    Only the **horizontal** grid is changed: fields keep their own vertical
+    coordinate (``depth``).  All fields are treated as **scalars** — vector
+    components (e.g. GLORYS ``uo``/``vo``) are interpolated as-is and stay on
+    geographic (east/north) axes; they are *not* rotated onto the model axes or
+    re-staggered to the C-grid.
+
+    Parameters
+    ----------
+    product : xr.Dataset, xr.DataArray, or str
+        Regular lon/lat[/depth] source (``longitude``/``latitude`` or
+        ``lon``/``lat``), or a path to one.
+    grid : xr.Dataset or str
+        HYCOM grid (``regional.grid`` path or a Dataset from
+        :func:`xhycom.open_dataset`).  Supplies the target points
+        ``plon``/``plat`` and, for conservative remapping, the cell corners
+        ``qlon``/``qlat``.
+    method : str
+        xESMF method.  Default ``"bilinear"`` (point interpolation of a coarser
+        product onto a finer grid).  ``"conservative"`` additionally needs the
+        grid corners ``qlon``/``qlat``.
+    periodic : bool
+        Whether the *product* is periodic in longitude (e.g. a global grid).
+        Default ``False``.
+    like : xr.Dataset, optional
+        A HYCOM field on the same ``(y, x)`` grid; its land/sea mask
+        (finite = ocean, via the first of ``temp``/``thknss``) is applied to
+        the output so product values are not carried onto HYCOM land.
+    weights : str, path-like, or bool, optional
+        Cache for the remap weights, as in :func:`regrid_horizontal`.  ``True``
+        keys an auto-named file by product/HYCOM geometry under
+        ``$XHYCOM_CACHE_DIR``; a path names an explicit file; ``None`` (default)
+        disables caching.
+
+    Returns
+    -------
+    xr.Dataset
+        Product fields on HYCOM dims ``(..., y, x)`` with 2-D ``lon``/``lat``
+        coordinates, lined up with a HYCOM Dataset for a like-for-like
+        difference.
+    """
+    try:
+        import xesmf as xe
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "regrid_to_hycom requires xESMF. Install with the 'regrid' extra "
+            "via conda-forge (xESMF needs ESMF/esmpy):\n"
+            "    conda env create -f ci/environment-regrid.yml"
+        ) from exc
+
+    grid = _load_grid(grid)
+    if grid is None or "plon" not in grid or "plat" not in grid:
+        raise ValueError(
+            "regrid_to_hycom needs a HYCOM grid carrying 'plon'/'plat' — pass "
+            "grid=<regional.grid path or Dataset>."
+        )
+
+    src = _open_target(product)
+    # Standardise the product's horizontal coordinate names to lon/lat.
+    rename = {old: new for old, new in (("longitude", "lon"), ("latitude", "lat"))
+              if old in src.variables}
+    src = src.rename(rename)
+    if "lon" not in src.variables or "lat" not in src.variables:
+        raise ValueError(
+            "product needs 1-D longitude/latitude (or lon/lat) coordinates."
+        )
+
+    # Target = HYCOM p-points (2-D lon/lat on (y, x)).
+    plon = np.asarray(grid["plon"].values)
+    plat = np.asarray(grid["plat"].values)
+    target_ds = xr.Dataset({"lat": (("y", "x"), plat), "lon": (("y", "x"), plon)})
+
+    conservative = method.startswith("conservative")
+    if conservative:
+        if "qlon" not in grid or "qlat" not in grid:
+            raise ValueError(
+                "conservative regrid_to_hycom needs target cell corners — the "
+                "grid must carry 'qlon'/'qlat'."
+            )
+        src = src.assign_coords(
+            lon_b=("lon_b", _edges_1d(src["lon"].values)),
+            lat_b=("lat_b", np.clip(_edges_1d(src["lat"].values), -90.0, 90.0)),
+        )
+        target_ds = target_ds.assign(
+            lon_b=(("y_b", "x_b"), _q_to_corners(np.asarray(grid["qlon"].values))),
+            lat_b=(("y_b", "x_b"), _q_to_corners(np.asarray(grid["qlat"].values))),
+        )
+
+    weights_path = _resolve_weights_to_hycom(weights, src, grid, method, periodic)
+    reuse = weights_path is not None and os.path.exists(weights_path)
+    regridder = xe.Regridder(
+        src, target_ds, method=method, periodic=periodic,
+        ignore_degenerate=True, unmapped_to_nan=True,
+        weights=weights_path if reuse else None,
+    )
+    if weights_path is not None and not reuse:
+        regridder.to_netcdf(weights_path)
+
+    # Regrid only the fields that actually carry the horizontal dims; pass the
+    # rest (1-D depth helpers, scalars) through untouched.
+    spatial = [v for v in src.data_vars
+               if "lon" in src[v].dims and "lat" in src[v].dims]
+    out = regridder(src[spatial], keep_attrs=True, skipna=True)
+    out = out.assign_coords(lon=(("y", "x"), plon), lat=(("y", "x"), plat))
+
+    if like is not None:
+        mask = _ocean_mask(like, None)
+        if mask is not None:
+            out = out.where(xr.DataArray(np.asarray(mask.values).astype(bool),
+                                         dims=("y", "x")))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -859,7 +1028,7 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
            periodic: bool = False, mask_edges: bool = True,
            apply_target_mask: bool = True, subset_target: bool = True,
            weights: "str | os.PathLike | bool | None" = None,
-           drop_pole: bool = False, order: str = "horizontal_first",
+           nan_pole: bool = True, order: str = "horizontal_first",
            variables: "list[str] | None" = None) -> xr.Dataset:
     """Regrid HYCOM output to a regular lon/lat/depth grid (lateral + vertical).
 
@@ -926,10 +1095,12 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         auto-keys a file by grid geometry under ``$XHYCOM_CACHE_DIR``; a path
         names an explicit file; ``None`` (default) disables caching.  See
         :func:`regrid_horizontal`.
-    drop_pole : bool
-        If ``True``, drop the exact geographic-pole rows (``|lat| = 90``) from
-        the output — singular on a regular lat/lon grid and unused by products
-        like GLORYS.  Default ``False``.
+    nan_pole : bool
+        If ``True`` (default), set the exact geographic-pole rows
+        (``|lat| = 90``) to NaN — singular on a regular lat/lon grid and unused
+        by products like GLORYS.  The row is kept, so the grid is unchanged and
+        stays aligned with the target for differencing.  Set ``False`` to keep
+        the raw remapped pole value.
     order : {"horizontal_first", "vertical_first"}
         Which step runs first (see above).  Default ``"horizontal_first"``
         (along-isopycnal, water-mass preserving).
@@ -956,13 +1127,13 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
             "carries a 'depth' coordinate."
         )
 
-    # The target mask is applied at the end on the full 3-D output, so each
-    # intermediate step runs without target masking.
+    # The target mask and pole-blanking are applied at the end on the full 3-D
+    # output, so each intermediate step runs without them.
     if order == "horizontal_first":
         # Blend along the native (isopycnal) layers, then collapse to depth:
         # preserves water masses / the T-S relationship in the interior.
         ds = regrid_horizontal(ds, lon, lat, grid=grid, method=method,
-                               periodic=periodic, weights=weights)
+                               periodic=periodic, weights=weights, nan_pole=False)
         ds = regrid_vertical(ds, depth, method=z_method, mask_edges=mask_edges,
                              variables=variables)
     elif order == "vertical_first":
@@ -971,13 +1142,13 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
         ds = regrid_vertical(ds, depth, method=z_method, mask_edges=mask_edges,
                              variables=variables)
         ds = regrid_horizontal(ds, lon, lat, grid=grid, method=method,
-                               periodic=periodic, weights=weights)
+                               periodic=periodic, weights=weights, nan_pole=False)
     else:
         raise ValueError(
             f"order must be 'horizontal_first' or 'vertical_first', got {order!r}."
         )
     if tgt is not None and apply_target_mask:
         ds = _apply_target_mask(ds, tgt, surface_only=False)
-    if drop_pole:
-        ds = _drop_pole(ds)
+    if nan_pole:
+        ds = _nan_pole(ds)
     return ds
