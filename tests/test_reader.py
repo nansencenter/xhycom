@@ -113,3 +113,17 @@ def test_postprocess_through_open_bathy(bathy_file, grid_file):
     assert "landmask" in ds
     assert ds["landmask"].values[0, 0] == 0          # land
     assert ds["landmask"].values[-1, -1] == 1        # ocean
+
+
+def test_archive_type_instantaneous(archive_file):
+    # The synthetic fixture writes a "... model day" header -> instantaneous archv.
+    ds = xhycom.open_dataset(archive_file)
+    assert ds.attrs["archive_type"] == "instantaneous"
+
+
+def test_archive_type_mean(tp0):
+    # The bundled archm fixture writes a "... mean day" header -> mean archive,
+    # whose u-vel./v-vel. are already the total current.
+    ds = xhycom.open_dataset(tp0.archive, postprocess=True)
+    assert ds.attrs["archive_type"] == "mean"
+    assert ds["u-vel."].attrs["hycom_velocity"] == "total"
