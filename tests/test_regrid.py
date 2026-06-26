@@ -170,6 +170,36 @@ def test_rotation_quarter_turn():
     assert out["v-vel."].isel(y=1, x=1).item() == pytest.approx(1.0)
 
 
+def test_velocities_east_north_keeps_native_grid_and_rotates():
+    ds = _uv_ds(1.0, 0.0)                               # u along model-x, v = 0
+    ny, nx = ds.sizes["y"], ds.sizes["x"]
+    grid = xr.Dataset({"pang": (("y", "x"), np.full((ny, nx), np.pi / 2))})
+    out = xhycom.velocities_east_north(ds, grid=grid)
+    # native (y, x) grid kept — no lon/lat dims introduced.
+    assert set(out["u-vel."].dims) == {"y", "x"}
+    # quarter turn at an interior point: east = 0, north = 1.
+    assert out["u-vel."].isel(y=1, x=1).item() == pytest.approx(0.0, abs=1e-12)
+    assert out["v-vel."].isel(y=1, x=1).item() == pytest.approx(1.0)
+    assert out["u-vel."].attrs["standard_name"] == "eastward_sea_water_velocity"
+    assert out["v-vel."].attrs["standard_name"] == "northward_sea_water_velocity"
+
+
+def test_velocities_east_north_passthrough_without_velocities():
+    ds = xr.Dataset({"temp": (("y", "x"), np.ones((3, 4)))})
+    out = xhycom.velocities_east_north(ds)             # no velocities, no grid needed
+    assert out is ds
+
+
+def test_velocities_east_north_uses_pang_on_ds():
+    # pang carried on ds (no grid= passed) is used directly.
+    ds = _uv_ds(1.0, 0.0)
+    ny, nx = ds.sizes["y"], ds.sizes["x"]
+    ds = ds.assign_coords(pang=(("y", "x"), np.zeros((ny, nx))))
+    out = xhycom.velocities_east_north(ds)             # pang=0 -> identity rotation
+    assert out["u-vel."].isel(y=1, x=1).item() == pytest.approx(1.0)
+    assert out["v-vel."].isel(y=1, x=1).item() == pytest.approx(0.0, abs=1e-12)
+
+
 # ---------------------------------------------------------------------------
 # horizontal regrid (xESMF) + full wrapper
 # ---------------------------------------------------------------------------
