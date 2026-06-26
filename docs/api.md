@@ -28,6 +28,8 @@ GLORYS).  See the {doc}`regridding` notebook.  The vertical step needs only
 .. autofunction:: xhycom.regrid
 .. autofunction:: xhycom.regrid_horizontal
 .. autofunction:: xhycom.regrid_vertical
+.. autofunction:: xhycom.regrid_to_hycom
+.. autofunction:: xhycom.velocities_east_north
 ```
 
 ## Internal utilities
