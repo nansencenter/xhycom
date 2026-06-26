@@ -352,6 +352,62 @@ def _move_to_tpoint(da: xr.DataArray, like: xr.DataArray,
     return da.rename(like.name)
 
 
+def velocities_east_north(ds: xr.Dataset,
+                          grid: "xr.Dataset | str | None" = None) -> xr.Dataset:
+    """De-stagger HYCOM C-grid velocities to T-points and rotate to true east/north.
+
+    HYCOM stores velocities on a staggered Arakawa C-grid with components along
+    the **model grid axes** (``u-vel.`` along x, ``v-vel.`` along y).  On a
+    curvilinear grid those axes are not east/north — they rotate across the
+    domain (sharply near the grid's poles).  This averages each (u, v) pair onto
+    the cell centre (T-point) and rotates the components onto the geographic axes
+    using the grid angle ``pang``::
+
+        east  = u * cos(pang) - v * sin(pang)
+        north = u * sin(pang) + v * cos(pang)
+
+    Unlike :func:`regrid_horizontal`, the **native curvilinear grid is kept** —
+    only the velocity components are de-staggered and rotated.  This is the piece
+    needed to compare model velocities against a regular product brought onto the
+    HYCOM grid by :func:`regrid_to_hycom`: that function interpolates the
+    product's velocities (e.g. GLORYS ``uo``/``vo``) as scalars, so they stay on
+    geographic east/north axes.  Rotating the model side here puts both on the
+    same axes on the same ``(y, x)`` grid, so they difference directly.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        HYCOM Dataset that may contain one or more (u, v) pairs (``u-vel.`` /
+        ``v-vel.``, ``u_btrop`` / ``v_btrop``, ``umix`` / ``vmix``,
+        ``si_u`` / ``si_v``).  A Dataset with no velocity pair is returned
+        unchanged.
+    grid : xr.Dataset or str, optional
+        HYCOM grid (``regional.grid`` path or a Dataset from
+        :func:`xhycom.open_dataset`) supplying the rotation angle ``pang``.  May
+        be omitted if ``ds`` already carries a ``pang`` coordinate.
+
+    Returns
+    -------
+    xr.Dataset
+        Copy of *ds* with each velocity pair de-staggered to the T-points and
+        rotated to true eastward / northward, re-homed onto the T-point
+        ``lon`` / ``lat`` coordinates and keeping the HYCOM names.  Each
+        component's ``standard_name`` becomes
+        ``eastward`` / ``northward_sea_water_velocity``.
+
+    Notes
+    -----
+    The de-stagger averages each edge value with its neighbour, so the last
+    column (for ``u``) and last row (for ``v``) — which have no neighbour —
+    become NaN boundary cells, exactly as inside :func:`regrid_horizontal`.
+    """
+    if not any(v in ds for v in (_U_VARS | _V_VARS)):
+        return ds
+    grid = _load_grid(grid)
+    pang = _get_pang(ds, grid)
+    return _uv_to_east_north(ds, pang)
+
+
 # ---------------------------------------------------------------------------
 # Horizontal: curvilinear -> regular lon/lat (xESMF)
 # ---------------------------------------------------------------------------

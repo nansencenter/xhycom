@@ -15,7 +15,10 @@ import xarray as xr
 from ._abfile import ABFile
 from ._discovery import find_archv_files
 from ._reader import detect_filetype, read_archv, read_bathy, read_grid, _read_archv_meta, _build_mf_lazy
-from ._regrid import regrid, regrid_horizontal, regrid_vertical, regrid_to_hycom
+from ._regrid import (
+    regrid, regrid_horizontal, regrid_vertical, regrid_to_hycom,
+    velocities_east_north,
+)
 from ._postprocess import postprocess
 # Private alias so the public `postprocess` name can also be a keyword argument
 # on open_dataset / open_mfdataset without shadowing the function.
@@ -30,6 +33,7 @@ __all__ = [
     "regrid_horizontal",
     "regrid_vertical",
     "regrid_to_hycom",
+    "velocities_east_north",
 ]
 
 # A grid argument is either a path to ``regional.grid`` or a pre-loaded Dataset.
