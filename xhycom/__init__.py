@@ -183,9 +183,12 @@ def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
     elif filetype == "archv":
         # chunks is handled inside read_archv: data is never loaded eagerly
         # when chunks is set — Dask tasks are created instead.
+        aug, auto = _augment_velocity_vars(variables, postprocess)
         ds = read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks,
-                        variables=variables)
-        return _postprocess_ds(ds) if postprocess else ds
+                        variables=aug)
+        if postprocess:
+            ds = _drop_auto(_postprocess_ds(ds), auto)
+        return ds
     elif filetype == "bathy":
         if grid_ds is None:
             raise ValueError(
@@ -268,6 +271,10 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
 
     grid_ds = _load_grid(grid, endian)
 
+    # When velocities are requested with postprocess, also read the barotropic
+    # part so the total current can be formed, then drop it afterwards.
+    aug, auto = _augment_velocity_vars(variables, postprocess)
+
     if chunks is not None:
         # Lazy path: parse all .b headers in parallel (no .a I/O), then build
         # a combined Dask Dataset in one pass — avoids xr.concat overhead.
@@ -313,9 +320,9 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
             time_chunk = chunks
 
         ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian,
-                            variables=variables, time_chunk=time_chunk)
+                            variables=aug, time_chunk=time_chunk)
         if postprocess:
-            ds = _postprocess_ds(ds)
+            ds = _drop_auto(_postprocess_ds(ds), auto)
         return ds.chunk(chunks)
 
     else:
@@ -324,7 +331,7 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
         for basename in basenames:
             try:
                 datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian,
-                                           variables=variables))
+                                           variables=aug))
             except Exception as exc:
                 if skip_errors:
                     warnings.warn(f"Skipping {basename!r}: {exc}", stacklevel=2)
@@ -337,4 +344,6 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
         ds = xr.concat(
             datasets, dim="time", data_vars="minimal", coords="minimal", compat="override",
         )
-        return _postprocess_ds(ds) if postprocess else ds
+        if postprocess:
+            return _drop_auto(_postprocess_ds(ds), auto)
+        return ds
