@@ -313,6 +313,11 @@ class ABFileArchv(ABFile):
         return set(elem["k"] for elem in self._fields.values())
 
     @property
+    def is_mean(self) -> bool:
+        """True for a mean archive (archm: '... mean day' header), else instantaneous."""
+        return getattr(self, "_is_mean", False)
+
+    @property
     def iversn(self) -> "int | None":
         return self._iversn
 
