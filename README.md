@@ -30,4 +30,4 @@ ds["temp"].isel(k=0).mean("time").compute()
 ## Documentation
 
 Full documentation — why xarray, worked examples, API reference, and a
-how-it-works guide — is at **https://xhycom.readthedocs.io**.
+how-it-works guide — is at **[https://xhycom.readthedocs.io](https://xhycom.readthedocs.io/en/latest/)**.
