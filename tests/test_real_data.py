@@ -10,6 +10,7 @@ The ``.b`` header stores per-field min/max computed independently of the
 ``.a`` binary, so asserting the read array's min/max against the header is a
 strong check that the binary record layout is decoded correctly.
 """
+
 import re
 
 import numpy as np
@@ -97,8 +98,15 @@ def test_open_bathy(tp0):
 def test_open_archive_structure(tp0):
     grid = xhycom.open_dataset(tp0.grid)
     ds = xhycom.open_dataset(tp0.archive, grid=grid)
-    assert set(ds.data_vars) == {"montg1", "srfhgt", "temp", "salin",
-                                 "thknss", "u-vel.", "v-vel."}
+    assert set(ds.data_vars) == {
+        "montg1",
+        "srfhgt",
+        "temp",
+        "salin",
+        "thknss",
+        "u-vel.",
+        "v-vel.",
+    }
     assert set(ds["temp"].dims) == {"time", "k", "y", "x"}
     assert ds["srfhgt"].dims == ("time", "y", "x")
     assert ds.sizes["k"] == tp0.nlayers
@@ -122,9 +130,9 @@ def test_open_archive_hybrid_density_profile(tp0):
     ds = xhycom.open_dataset(tp0.archive, grid=grid)
     dens = ds["dens"].values
     assert dens.shape == (tp0.nlayers,)
-    assert np.all(dens[:5] < 1.0)           # z-coordinate cap layers
-    assert np.all(dens[5:] > 20.0)          # isopycnal interior
-    assert np.all(np.diff(dens) > 0)        # monotonically increasing
+    assert np.all(dens[:5] < 1.0)  # z-coordinate cap layers
+    assert np.all(dens[5:] > 20.0)  # isopycnal interior
+    assert np.all(np.diff(dens) > 0)  # monotonically increasing
 
 
 def test_open_archive_values_match_header(tp0):
@@ -150,7 +158,9 @@ def test_lazy_matches_eager(tp0):
     lazy = xhycom.open_dataset(tp0.archive, grid=grid, chunks={"k": 1})
     assert lazy["temp"].chunks is not None
     np.testing.assert_allclose(
-        lazy["temp"].values, eager["temp"].values, equal_nan=True,
+        lazy["temp"].values,
+        eager["temp"].values,
+        equal_nan=True,
     )
 
 
@@ -213,13 +223,15 @@ def test_regrid_horizontal(real_ds):
 def test_regrid_near_pole_full_coverage_no_overshoot(real_ds):
     """The TOPAZ confmap grid reaches ~89.6 N with no fold/zipper, so a
     conservative remap of its near-pole rows is fully covered (no seam gap) and
-    bounded (no overshoot from malformed near-pole cells)."""
+    bounded (no overshoot from malformed near-pole cells).
+    """
     pytest.importorskip("xesmf")
     ds, grid = real_ds
     lon = np.arange(-180.0, 180.0, 1.0)
-    lat = np.arange(86.0, 89.51, 0.5)            # within the source's ~89.58 N max
-    out = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, grid=grid,
-                                   method="conservative")
+    lat = np.arange(86.0, 89.51, 0.5)  # within the source's ~89.58 N max
+    out = xhycom.regrid_horizontal(
+        ds, lon=lon, lat=lat, grid=grid, method="conservative"
+    )
     t = out["temp"].isel(time=0, k=0).values
     # The 89.5 N row is fully populated across all longitudes (no fold seam).
     assert np.isfinite(t[-1]).all()
@@ -233,7 +245,11 @@ def test_regrid_end_to_end(real_ds):
     pytest.importorskip("xgcm")
     ds, grid = real_ds
     out = xhycom.regrid(
-        ds, lon=_TLON, lat=_TLAT, depth=[0, 50, 200, 1000], grid=grid,
+        ds,
+        lon=_TLON,
+        lat=_TLAT,
+        depth=[0, 50, 200, 1000],
+        grid=grid,
     )
     assert set(out["temp"].dims) == {"time", "depth", "lat", "lon"}
     assert np.isfinite(out["temp"].values).any()
@@ -246,7 +262,7 @@ def test_regrid_to_glorys_target(real_ds, glorys):
     pytest.importorskip("xesmf")
     pytest.importorskip("xgcm")
     ds, grid = real_ds
-    out = xhycom.regrid(ds, target=glorys, grid=grid)   # conservative default
+    out = xhycom.regrid(ds, target=glorys, grid=grid)  # conservative default
     # lands exactly on the GLORYS lon/lat/depth grid
     assert set(out["temp"].dims) == {"time", "depth", "lat", "lon"}
     np.testing.assert_array_equal(out["lon"].values, glorys["longitude"].values)
@@ -276,8 +292,9 @@ def test_horizontal_conservative_to_glorys_preserves_constant(real_ds, glorys):
     ds, grid = real_ds
     const = ds.copy()
     const["temp"] = xr.full_like(ds["temp"], 4.0)
-    out = xhycom.regrid_horizontal(const, target=glorys, grid=grid,
-                                   method="conservative", apply_target_mask=False)
+    out = xhycom.regrid_horizontal(
+        const, target=glorys, grid=grid, method="conservative", apply_target_mask=False
+    )
     v = out["temp"].isel(time=0, k=0).values
     finite = np.isfinite(v)
     assert finite.any()
@@ -294,8 +311,9 @@ def test_horizontal_conservative_to_glorys_conserves_area_integral(real_ds, glor
     w = np.cos(np.deg2rad(lat))[:, None] * np.ones_like(lon)[None, :]
 
     def area_mean(method):
-        o = xhycom.regrid_horizontal(ds, target=glorys, grid=grid,
-                                     method=method, apply_target_mask=False)
+        o = xhycom.regrid_horizontal(
+            ds, target=glorys, grid=grid, method=method, apply_target_mask=False
+        )
         t = o["temp"].isel(time=0, k=0).values
         m = np.isfinite(t)
         return np.sum(t[m] * w[m]) / np.sum(w[m])

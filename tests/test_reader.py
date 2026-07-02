@@ -1,4 +1,5 @@
 """Reader tests against synthetic .ab fixtures (see conftest.py)."""
+
 import numpy as np
 import pytest
 
@@ -41,7 +42,7 @@ def test_open_bathy(bathy_file, grid_file):
     ds = xhycom.open_dataset(base, grid=grid)
     wet = depth < 1e30
     np.testing.assert_allclose(ds["depth"].values[wet], depth[wet], rtol=1e-5)
-    assert np.isnan(ds["depth"].values[0, 0])         # land point -> NaN
+    assert np.isnan(ds["depth"].values[0, 0])  # land point -> NaN
     assert "lon" in ds.coords and "lat" in ds.coords
 
 
@@ -57,7 +58,9 @@ def test_open_archive_structure(archive_file, grid_file):
     np.testing.assert_allclose(ds["dens"].values, [28.0, 29.0, 30.0])
     # temp[k] == 10 - k
     np.testing.assert_allclose(
-        ds["temp"].isel(time=0, y=0, x=0).values, [9.0, 8.0, 7.0], rtol=1e-5,
+        ds["temp"].isel(time=0, y=0, x=0).values,
+        [9.0, 8.0, 7.0],
+        rtol=1e-5,
     )
     assert ds["time"].size == 1
 
@@ -82,7 +85,9 @@ def test_open_mfdataset_lazy_chunks(archive_pair, grid_file):
     ds = xhycom.open_mfdataset(archive_pair, grid=grid, chunks={"time": 1})
     assert ds["temp"].chunks is not None
     np.testing.assert_allclose(
-        ds["temp"].isel(time=0, y=0, x=0).values, [9.0, 8.0, 7.0], rtol=1e-5,
+        ds["temp"].isel(time=0, y=0, x=0).values,
+        [9.0, 8.0, 7.0],
+        rtol=1e-5,
     )
 
 
@@ -93,11 +98,13 @@ def test_postprocess_through_open_archive(archive_file, grid_file):
     grid = xhycom.open_dataset(grid_file[0])
     ds = xhycom.open_dataset(archive_file, grid=grid, postprocess=True)
     assert ds["srfhgt"].attrs["units"] == "m"
-    np.testing.assert_allclose(ds["srfhgt"].isel(time=0, y=0, x=0).values, 0.5,
-                               rtol=1e-4)
+    np.testing.assert_allclose(
+        ds["srfhgt"].isel(time=0, y=0, x=0).values, 0.5, rtol=1e-4
+    )
     assert ds["thknss"].attrs["units"] == "m"
-    np.testing.assert_allclose(ds["thknss"].isel(time=0, y=0, x=0).values,
-                               [10.0, 10.0, 10.0], rtol=1e-4)
+    np.testing.assert_allclose(
+        ds["thknss"].isel(time=0, y=0, x=0).values, [10.0, 10.0, 10.0], rtol=1e-4
+    )
 
 
 def test_postprocess_through_open_grid(grid_file):
@@ -111,8 +118,8 @@ def test_postprocess_through_open_bathy(bathy_file, grid_file):
     grid = xhycom.open_dataset(grid_file[0])
     ds = xhycom.open_dataset(bathy_file[0], grid=grid, postprocess=True)
     assert "landmask" in ds
-    assert ds["landmask"].values[0, 0] == 0          # land
-    assert ds["landmask"].values[-1, -1] == 1        # ocean
+    assert ds["landmask"].values[0, 0] == 0  # land
+    assert ds["landmask"].values[-1, -1] == 1  # ocean
 
 
 def test_archive_type_instantaneous(archive_file):

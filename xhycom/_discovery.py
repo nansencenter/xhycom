@@ -1,4 +1,5 @@
 """File discovery helpers for HYCOM archive datasets."""
+
 from __future__ import annotations
 
 import glob
@@ -48,9 +49,8 @@ def find_archv_files(path: str) -> list[str]:
     'data/archv.2020_001_00'
     """
     if os.path.isdir(path):
-        candidates = (
-            glob.glob(os.path.join(path, "archv.*.b")) +
-            glob.glob(os.path.join(path, "archm.*.b"))
+        candidates = glob.glob(os.path.join(path, "archv.*.b")) + glob.glob(
+            os.path.join(path, "archm.*.b")
         )
     else:
         # Treat as glob; strip any .a/.b suffix before globbing

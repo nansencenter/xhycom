@@ -155,7 +155,7 @@ directories, same as `~/.cache`.
 
 Always add that export to your `~/.bashrc`, even if you also put it in the Open
 OnDemand *Environment setup* field (see
-[On Olivia / Betzy (NRIS)](#on-olivia-betzy-nris)) or a batch job script. 
+[On Olivia / Betzy (NRIS)](#on-olivia-betzy-nris)) or a batch job script.
 
 ## Dependencies
 

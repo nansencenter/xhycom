@@ -20,6 +20,7 @@ pressure in Pa) and only the variables physically stored on disk are present.
 It is exposed both via ``open_dataset(..., postprocess=True)`` and as the
 public :func:`xhycom.postprocess` so it can be applied to an existing Dataset.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -34,11 +35,11 @@ _ONEM = 9806.0
 
 # name -> (factor, new units, new long_name or None)
 _UNIT_CONVERSIONS: dict[str, tuple[float, str, str | None]] = {
-    "srfhgt":   (1.0 / _G,    "m", "sea surface height"),
-    "thknss":   (1.0 / _ONEM, "m", "layer thickness"),
+    "srfhgt": (1.0 / _G, "m", "sea surface height"),
+    "thknss": (1.0 / _ONEM, "m", "layer thickness"),
     "mix_dpth": (1.0 / _ONEM, "m", "mixed layer depth"),
-    "bl_dpth":  (1.0 / _ONEM, "m", "boundary layer depth"),
-    "thmix":    (1.0 / _ONEM, "m", "mixed layer thickness"),
+    "bl_dpth": (1.0 / _ONEM, "m", "boundary layer depth"),
+    "thmix": (1.0 / _ONEM, "m", "mixed layer thickness"),
 }
 
 
@@ -139,11 +140,12 @@ def _reconcile_velocities(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def _scale(da: xr.DataArray, factor: float, units: str,
-           long_name: str | None = None) -> xr.DataArray:
+def _scale(
+    da: xr.DataArray, factor: float, units: str, long_name: str | None = None
+) -> xr.DataArray:
     """Scale a DataArray, replacing its units/long_name and recording the source."""
     native = da.attrs.get("units", "native")
-    out = da * factor                       # lazy for Dask; drops attrs
+    out = da * factor  # lazy for Dask; drops attrs
     attrs = dict(da.attrs)
     attrs["units"] = units
     if long_name is not None:

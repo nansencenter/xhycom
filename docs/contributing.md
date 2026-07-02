@@ -30,6 +30,33 @@ conda activate hycom-analysis-env
 pytest
 ```
 
+## Pre-commit hooks
+
+The project uses [pre-commit](https://pre-commit.com) to run linting/formatting
+(ruff) and basic file checks before each commit. It's already installed if you
+followed either of the setups above — it's in the `dev` extra
+(`pip install -e ".[dev]"`) and in `ci/environment-regrid.yml`. Otherwise,
+install it directly:
+
+```bash
+pip install pre-commit
+```
+
+Then install the git hook so the checks run automatically on `git commit`:
+
+```bash
+pre-commit install
+```
+
+Without this step, the hooks won't run locally — they'll only run in CI, where
+they're required to pass before a PR can merge.
+
+To run all hooks manually against the full codebase (e.g. before opening a PR):
+
+```bash
+pre-commit run --all-files
+```
+
 ## Building the documentation locally
 
 The documentation is built with [Sphinx](https://www.sphinx-doc.org) using

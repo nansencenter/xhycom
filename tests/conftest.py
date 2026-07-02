@@ -6,13 +6,14 @@ layout is ``n2drec``-padded big-endian float32 records (see ``AFile``); the
 ``.b`` headers mirror exactly what ``ABFileGrid`` / ``ABFileBathy`` /
 ``ABFileArchv`` parse.
 """
+
 import os
 
 import numpy as np
 import pytest
 
-IDM, JDM = 5, 4               # tiny grid (x, y)
-SPVAL = 2.0 ** 100           # HYCOM land/pad fill value (read as masked)
+IDM, JDM = 5, 4  # tiny grid (x, y)
+SPVAL = 2.0**100  # HYCOM land/pad fill value (read as masked)
 _N2DREC = ((IDM * JDM + 4095) // 4096) * 4096
 
 # Bundled real-data sample (a subset of the TP0 run; see tests/data/_subset_tp0.py).
@@ -21,6 +22,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 class _TP0:
     """Basenames (no extension) of the bundled real-data fixtures."""
+
     dir = DATA_DIR
     grid = os.path.join(DATA_DIR, "regional.grid")
     bathy = os.path.join(DATA_DIR, "depth_TP0a1.00_01")
@@ -45,6 +47,7 @@ def glorys():
     if not os.path.exists(GLORYS_GRID):
         pytest.skip("bundled GLORYS target-grid fixture is not available")
     import xarray as xr
+
     return xr.open_dataset(GLORYS_GRID)
 
 
@@ -98,10 +101,13 @@ def bathy_file(tmp_path):
     """Write depth_TEST.[ab] with a land corner (masked). Returns (basename, depth)."""
     base = str(tmp_path / "depth_TEST_01")
     depth = _ramp(50.0, 10.0)
-    depth[0, 0] = SPVAL                      # one land point
+    depth[0, 0] = SPVAL  # one land point
     lines = [
         "Synthetic bathymetry for tests\n",
-        "line 2\n", "line 3\n", "line 4\n", "line 5\n",
+        "line 2\n",
+        "line 3\n",
+        "line 4\n",
+        "line 5\n",
         f"min,max  depth = {10.0:.4f} {depth[depth < SPVAL].max():.4f}\n",
     ]
     with open(base + ".b", "w") as f:
@@ -129,7 +135,7 @@ def _archive_records():
         for k in (1, 2, 3):
             specs.append((name, 12, 40909.5, k, densities[k]))
             arrays.append(np.full((JDM, IDM), base_val - k, dtype="f4"))
-    for k in (1, 2, 3):                       # thknss = 10 m per layer, in Pa
+    for k in (1, 2, 3):  # thknss = 10 m per layer, in Pa
         specs.append(("thknss", 12, 40909.5, k, densities[k]))
         arrays.append(np.full((JDM, IDM), 10.0 * onem, dtype="f4"))
     return specs, arrays
@@ -141,7 +147,9 @@ def _write_archive(base, idm=IDM, jdm=JDM, iexpt=18, day=40909.5):
     specs = [(n, s, day, k, d) for (n, s, _, k, d) in specs]
     lines = [
         "Synthetic HYCOM archive for tests\n",
-        "experiment line\n", "comment line\n", "comment line\n",
+        "experiment line\n",
+        "comment line\n",
+        "comment line\n",
         f"{20:6d}    'iversn' = hycom version number x10\n",
         f"{iexpt:6d}    'iexpt ' = experiment number x10\n",
         f"{3:6d}    'yrflag' = days in year flag\n",
@@ -149,7 +157,7 @@ def _write_archive(base, idm=IDM, jdm=JDM, iexpt=18, day=40909.5):
         f"{jdm:6d}    'jdm   ' = latitudinal array size\n",
         "field       time step  model day  k  dens        min              max\n",
     ]
-    for (name, step, d, k, dens) in specs:
+    for name, step, d, k, dens in specs:
         arr_min, arr_max = -1.0e3, 1.0e3
         lines.append(
             f"{name:<8s} = {step:7d} {d:11.3f} {k:3d} {dens:7.3f} "
