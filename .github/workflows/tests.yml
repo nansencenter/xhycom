@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -v
+
+  test-regrid:
+    # xesmf is conda-forge only, so the horizontal/lateral regrid tests (gated by
+    # pytest.importorskip("xesmf")) are skipped, not run, in the pip-only `test`
+    # job above. Run the full suite, including those, in the conda environment.
+    # Coverage is reported from here since it exercises the most code.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: ci/environment-regrid.yml
+          miniforge-version: latest
+      - run: pytest -v --cov=xhycom --cov-report=xml --cov-report=term-missing
+        shell: bash -el {0}
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false

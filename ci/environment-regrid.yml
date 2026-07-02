@@ -10,7 +10,9 @@ dependencies:
   - xgcm
   - xesmf
   - dask
+  - numba     # xgcm's Grid.transform needs this for method="conservative"
   - scipy
+  - netcdf4   # opening GLORYS / writing regridded output to NetCDF
   # Jupyter, so `jupyter lab` runs directly from this environment in an
   # Open OnDemand JupyterLab session
   - jupyterlab

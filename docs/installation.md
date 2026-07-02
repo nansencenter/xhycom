@@ -130,14 +130,8 @@ export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
 ```
 ::::
 
-## Editable / development install
-
-```bash
-git clone https://github.com/nansencenter/xhycom.git
-cd xhycom
-pip install -e .            # core (includes Dask + xgcm)
-pip install -e ".[dev]"     # with test dependencies
-```
+For an editable / development install and how to run the test suite, see the
+[Contributor Guide](contributing.md#editable--development-install).
 
 ## Cache directory for regrid weights
 

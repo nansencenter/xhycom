@@ -17,4 +17,5 @@ analysis.ipynb
 regridding.ipynb
 time-averaging.ipynb
 api
+contributing
 ```
