@@ -15,5 +15,6 @@ quickstart.ipynb
 lazy-loading.ipynb
 analysis.ipynb
 regridding.ipynb
+time-averaging.ipynb
 api
 ```

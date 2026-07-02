@@ -18,7 +18,7 @@ extensions = [
 ]
 
 nb_execution_mode = "off"   # notebooks are pre-executed; don't re-run at build time
-myst_enable_extensions = ["colon_fence"]
+myst_enable_extensions = ["colon_fence", "dollarmath", "amsmath"]
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

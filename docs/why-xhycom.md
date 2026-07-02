@@ -6,7 +6,7 @@ xhycom reads HYCOM `.ab` output directly into a labelled [xarray](why-xarray.ipy
 
 There are three common workflows.
 
-**1. `abfile` + NumPy** — the standard low-level reader; returns one masked array per field:
+**1. [`abfile`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/pythonlibs/abfile) + NumPy** — the standard low-level reader; returns one masked array per field:
 
 ```python
 import abfile.abfile as abf
@@ -15,7 +15,7 @@ ab = abf.ABFileArchv("archv.2020_001_00", "r")
 temp_sfc = ab.read_field("temp", 1)        # (jdm, idm) masked array, layer 1
 ```
 
-**2. `m2nc` → xarray** — a Fortran tool (`hycom/MSCPROGS/src/ExtractNC2D`) that converts `.ab` to NetCDF, which you then open with xarray:
+**2. `m2nc` → xarray** — a Fortran tool ([`hycom/MSCPROGS/src/ExtractNC2D`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/ExtractNC2D)) that converts `.ab` to NetCDF, which you then open with xarray:
 
 ```bash
 m2nc archv.2020_001_00.a ...               # writes tmp1.nc
@@ -55,7 +55,7 @@ ds["temp"].isel(k=0).mean("time").compute().plot(x="lon", y="lat")
 
 ### Conservative regridding to a regular grid
 
-HYCOM's curvilinear, hybrid-coordinate output usually has to be mapped onto a regular lon/lat/depth grid before it can be compared with reanalyses such as [GLORYS](https://doi.org/10.48670/moi-00021). The established tool is **`hyc2proj`** (Fortran, `hycom/MSCPROGS/src/Hyc2proj`): you edit `proj.in`, `depthlevels.in` and `extract.archv`, run the compiled binary, and get a NetCDF file. Its horizontal step is bilinear and its vertical step is spline / linear / staircase — none of them conservative.
+HYCOM's curvilinear, hybrid-coordinate output usually has to be mapped onto a regular lon/lat/depth grid before it can be compared with reanalyses such as [GLORYS](https://doi.org/10.48670/moi-00021). The established tool is **[`hyc2proj`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Hyc2proj)** (Fortran, `hycom/MSCPROGS/src/Hyc2proj`): you edit `proj.in`, `depthlevels.in` and `extract.archv`, run the compiled binary, and get a NetCDF file. Its horizontal step is bilinear and its vertical step is spline / linear / staircase — none of them conservative.
 
 `xhycom.regrid` does it in one in-process call and **conservatively by default** — area-conservative horizontally, depth-integral-conserving (thickness-weighted) vertically — onto any regular grid, including a GLORYS grid opened straight from its NetCDF file:
 
@@ -64,7 +64,7 @@ glorys = xr.open_dataset("GLO-MFC_001_030_mask_bathy.nc")   # regular lon/lat/de
 ds_glorys = xhycom.regrid(ds, target=glorys, grid="regional.grid")
 ```
 
-|                | `hyc2proj` (MSCPROGS)                          | `xhycom.regrid`                                            |
+|                | [`hyc2proj` (MSCPROGS)](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Hyc2proj) | `xhycom.regrid`                                            |
 | -------------- | ---------------------------------------------- | ---------------------------------------------------------- |
 | Horizontal     | bilinear                                       | conservative (default), bilinear, patch                    |
 | Vertical       | spline / linear / staircase                    | conservative (default, thickness-weighted) or linear       |
@@ -73,6 +73,8 @@ ds_glorys = xhycom.regrid(ds, target=glorys, grid="regional.grid")
 | Interface      | edit text input files, run a Fortran binary    | one Python call, returns an `xr.Dataset`                   |
 | Output         | static NetCDF file                             | lazy / Dask Dataset (write NetCDF if you want)             |
 | Velocities     | rotated to east/north                          | de-staggered to T-points **and** rotated to east/north     |
+
+Regridding many time steps of large output is still expensive — as with the Fortran tools, xhycom doesn't change that, and a batch job (e.g. a Slurm script) is often the right way to run it. For a handful of time steps or a short time horizon, it works fine interactively.
 
 See the [regridding tutorial](regridding.ipynb) for worked examples.
 
