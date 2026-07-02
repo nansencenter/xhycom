@@ -1,4 +1,4 @@
-name: xhycom-regrid
+name: hycom-analysis-env
 channels:
   - conda-forge
 dependencies:
@@ -11,6 +11,10 @@ dependencies:
   - xesmf
   - dask
   - scipy
+  # Jupyter, so `jupyter lab` runs directly from this environment in an
+  # Open OnDemand JupyterLab session
+  - jupyterlab
+  - ipykernel
   # testing
   - pytest
   - pytest-cov
