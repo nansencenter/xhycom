@@ -24,6 +24,7 @@ backend is conda-only (no PyPI wheels) and can conflict with other ESMF
 installs on some platforms, so it stays optional and is imported lazily:
 ``conda env create -f ci/environment-regrid.yml``.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -52,7 +53,7 @@ _V_VARS = frozenset(v for _, v in _UV_PAIRS)
 # ---------------------------------------------------------------------------
 # Target grids: accept a Dataset / path (e.g. GLORYS) instead of raw arrays
 # ---------------------------------------------------------------------------
-def _open_target(target: "xr.Dataset | xr.DataArray | str") -> xr.Dataset:
+def _open_target(target: xr.Dataset | xr.DataArray | str) -> xr.Dataset:
     """Accept an ``xr.Dataset`` or a path to one; return an ``xr.Dataset``."""
     if isinstance(target, xr.Dataset):
         return target
@@ -61,7 +62,7 @@ def _open_target(target: "xr.Dataset | xr.DataArray | str") -> xr.Dataset:
     return xr.open_dataset(target)
 
 
-def _load_grid(grid: "xr.Dataset | str | None") -> "xr.Dataset | None":
+def _load_grid(grid: xr.Dataset | str | None) -> xr.Dataset | None:
     """Accept a ``regional.grid`` path or a pre-loaded Dataset; return a Dataset.
 
     Mirrors :func:`xhycom.open_dataset`'s ``grid=`` so the regrid functions
@@ -71,25 +72,25 @@ def _load_grid(grid: "xr.Dataset | str | None") -> "xr.Dataset | None":
     if grid is None or isinstance(grid, xr.Dataset):
         return grid
     from . import open_dataset
+
     return open_dataset(grid)
 
 
-def _target_lonlat(tgt: xr.Dataset) -> "tuple[np.ndarray, np.ndarray]":
+def _target_lonlat(tgt: xr.Dataset) -> tuple[np.ndarray, np.ndarray]:
     """1-D target longitudes / latitudes from a grid Dataset."""
     lon = tgt["longitude"] if "longitude" in tgt.variables else tgt["lon"]
     lat = tgt["latitude"] if "latitude" in tgt.variables else tgt["lat"]
     return np.asarray(lon.values), np.asarray(lat.values)
 
 
-def _lonlat_names(tgt: xr.Dataset) -> "tuple[str, str]":
+def _lonlat_names(tgt: xr.Dataset) -> tuple[str, str]:
     """Names of the 1-D longitude / latitude coordinates on a target grid."""
     lon = "longitude" if "longitude" in tgt.variables else "lon"
     lat = "latitude" if "latitude" in tgt.variables else "lat"
     return lon, lat
 
 
-def _subset_target(tgt: xr.Dataset, ds: xr.Dataset,
-                   pad: float = 1.0) -> xr.Dataset:
+def _subset_target(tgt: xr.Dataset, ds: xr.Dataset, pad: float = 1.0) -> xr.Dataset:
     """Trim a regular target grid to the source's lon/lat extent (plus *pad*).
 
     A regional HYCOM source (e.g. TOPAZ2) usually covers a small fraction of a
@@ -118,8 +119,11 @@ def _subset_target(tgt: xr.Dataset, ds: xr.Dataset,
     lon_keep = np.ones(tlon.shape, dtype=bool)
     near_pole = lat_hi >= 88.0 or lat_lo <= -88.0
     s = np.mod(slon, 360.0)
-    if not near_pole and (np.nanmax(slon) - np.nanmin(slon)) < 350.0 \
-            and (np.nanmax(s) - np.nanmin(s)) < 350.0:
+    if (
+        not near_pole
+        and (np.nanmax(slon) - np.nanmin(slon)) < 350.0
+        and (np.nanmax(s) - np.nanmin(s)) < 350.0
+    ):
         t = np.mod(tlon, 360.0)
         lon_keep = (t >= np.nanmin(s) - pad) & (t <= np.nanmax(s) + pad)
 
@@ -135,14 +139,15 @@ def _subset_target(tgt: xr.Dataset, ds: xr.Dataset,
 # ---------------------------------------------------------------------------
 # Weight caching: build the xESMF remap matrix once per (source, target, method)
 # ---------------------------------------------------------------------------
-def _extent(a: ArrayLike) -> "tuple[float, float]":
+def _extent(a: ArrayLike) -> tuple[float, float]:
     """(min, max) of an array, rounded — a stable, cheap grid signature."""
     a = np.asarray(a)
     return round(float(np.nanmin(a)), 4), round(float(np.nanmax(a)), 4)
 
 
-def _weights_signature(src: xr.Dataset, lon: ArrayLike, lat: ArrayLike,
-                       method: str, periodic: bool) -> "tuple[str, str]":
+def _weights_signature(
+    src: xr.Dataset, lon: ArrayLike, lat: ArrayLike, method: str, periodic: bool
+) -> tuple[str, str]:
     """A (label, signature) pair identifying the remap weights.
 
     The weights depend only on the two grids' geometry and the *method*, not on
@@ -171,14 +176,16 @@ def _cache_dir() -> str:
     """Directory for cached weight files: ``$XHYCOM_CACHE_DIR`` or XDG default."""
     base = os.environ.get("XHYCOM_CACHE_DIR")
     if not base:
-        xdg = os.environ.get("XDG_CACHE_HOME",
-                             os.path.join(os.path.expanduser("~"), ".cache"))
+        xdg = os.environ.get(
+            "XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")
+        )
         base = os.path.join(xdg, "xhycom", "regrid_weights")
     return base
 
 
-def _record_manifest(cache_dir: str, key: str, label: str, signature: str,
-                     tgt: "xr.Dataset | None") -> None:
+def _record_manifest(
+    cache_dir: str, key: str, label: str, signature: str, tgt: xr.Dataset | None
+) -> None:
     """Append a human-readable ``hash -> grids`` entry to the cache manifest.
 
     Best-effort: the cache works without it, so any I/O error is swallowed.  The
@@ -206,10 +213,15 @@ def _record_manifest(cache_dir: str, key: str, label: str, signature: str,
         pass
 
 
-def _resolve_weights(weights: "str | os.PathLike | bool | None",
-                     src: xr.Dataset, lon: ArrayLike, lat: ArrayLike,
-                     method: str, periodic: bool,
-                     tgt: "xr.Dataset | None" = None) -> "str | None":
+def _resolve_weights(
+    weights: str | os.PathLike | bool | None,
+    src: xr.Dataset,
+    lon: ArrayLike,
+    lat: ArrayLike,
+    method: str,
+    periodic: bool,
+    tgt: xr.Dataset | None = None,
+) -> str | None:
     """Map the *weights* argument to a weights-file path (or ``None``).
 
     ``None`` / ``False`` disable caching; ``True`` derives a content-keyed file
@@ -232,15 +244,16 @@ def _resolve_weights(weights: "str | os.PathLike | bool | None",
     return path
 
 
-def _target_depth(tgt: xr.Dataset) -> "np.ndarray | None":
+def _target_depth(tgt: xr.Dataset) -> np.ndarray | None:
     """1-D target depths (metres) from a grid Dataset, or ``None``."""
     if "depth" in tgt.variables:
         return np.asarray(tgt["depth"].values)
     return None
 
 
-def _apply_target_mask(out: xr.Dataset, tgt: xr.Dataset,
-                       surface_only: bool) -> xr.Dataset:
+def _apply_target_mask(
+    out: xr.Dataset, tgt: xr.Dataset, surface_only: bool
+) -> xr.Dataset:
     """Mask *out* to the target ocean mask (1 = sea), if the grid carries one.
 
     The mask dims (GLORYS: ``longitude``/``latitude``/``depth``) are renamed to
@@ -251,16 +264,16 @@ def _apply_target_mask(out: xr.Dataset, tgt: xr.Dataset,
     if "mask" not in tgt.variables:
         return out
     mask = tgt["mask"].astype(bool)
-    rename = {old: new for old, new in
-              (("longitude", "lon"), ("latitude", "lat"), ("depth", "depth"))
-              if old in mask.dims}
+    rename = {
+        old: new
+        for old, new in (("longitude", "lon"), ("latitude", "lat"), ("depth", "depth"))
+        if old in mask.dims
+    }
     mask = mask.rename(rename)
     if surface_only and "depth" in mask.dims:
         mask = mask.isel(depth=0, drop=True)
     # Re-home onto out's coords (identical values, but ensures clean alignment).
-    mask = mask.assign_coords(
-        {d: out[d] for d in mask.dims if d in out.coords}
-    )
+    mask = mask.assign_coords({d: out[d] for d in mask.dims if d in out.coords})
     return out.where(mask)
 
 
@@ -338,10 +351,13 @@ def _uv_to_east_north(ds: xr.Dataset, pang: xr.DataArray) -> xr.Dataset:
     return out
 
 
-def _move_to_tpoint(da: xr.DataArray, like: xr.DataArray,
-                    direction: str) -> xr.DataArray:
+def _move_to_tpoint(
+    da: xr.DataArray, like: xr.DataArray, direction: str
+) -> xr.DataArray:
     """Re-home a de-staggered velocity onto the T-point lon/lat coords."""
-    da = da.drop_vars([c for c in ("lon_u", "lat_u", "lon_v", "lat_v") if c in da.coords])
+    da = da.drop_vars(
+        [c for c in ("lon_u", "lat_u", "lon_v", "lat_v") if c in da.coords]
+    )
     attrs = dict(like.attrs)
     base = attrs.get("long_name", like.name)
     attrs["long_name"] = f"{direction} component of {base}"
@@ -351,8 +367,9 @@ def _move_to_tpoint(da: xr.DataArray, like: xr.DataArray,
     return da.rename(like.name)
 
 
-def velocities_east_north(ds: xr.Dataset,
-                          grid: "xr.Dataset | str | None" = None) -> xr.Dataset:
+def velocities_east_north(
+    ds: xr.Dataset, grid: xr.Dataset | str | None = None
+) -> xr.Dataset:
     """De-stagger HYCOM C-grid velocities to T-points and rotate to true east/north.
 
     HYCOM stores velocities on a staggered Arakawa C-grid with components along
@@ -410,16 +427,20 @@ def velocities_east_north(ds: xr.Dataset,
 # ---------------------------------------------------------------------------
 # Horizontal: curvilinear -> regular lon/lat (xESMF)
 # ---------------------------------------------------------------------------
-def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
-                      lat: "ArrayLike | None" = None,
-                      grid: "xr.Dataset | str | None" = None,
-                      target: "xr.Dataset | str | None" = None,
-                      method: str = "conservative", periodic: bool = False,
-                      mask_var: "str | None" = None,
-                      apply_target_mask: bool = True,
-                      subset_target: bool = True,
-                      weights: "str | os.PathLike | bool | None" = None,
-                      nan_pole: bool = True) -> xr.Dataset:
+def regrid_horizontal(
+    ds: xr.Dataset,
+    lon: ArrayLike | None = None,
+    lat: ArrayLike | None = None,
+    grid: xr.Dataset | str | None = None,
+    target: xr.Dataset | str | None = None,
+    method: str = "conservative",
+    periodic: bool = False,
+    mask_var: str | None = None,
+    apply_target_mask: bool = True,
+    subset_target: bool = True,
+    weights: str | os.PathLike | bool | None = None,
+    nan_pole: bool = True,
+) -> xr.Dataset:
     """Regrid a HYCOM Dataset from its curvilinear grid to a regular lon/lat grid.
 
     Velocities (if present) are first de-staggered to T-points and rotated to
@@ -577,20 +598,26 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
     if conservative and "thknss" in src:
         layer_dim = _layer_dim(src["thknss"])
         if layer_dim is not None:
-            layered = [v for v in src.data_vars
-                       if layer_dim in src[v].dims and v != "thknss"]
+            layered = [
+                v for v in src.data_vars if layer_dim in src[v].dims and v != "thknss"
+            ]
         if layered:
             remap_src = src.copy()
             for v in layered:
                 layer_attrs[v] = dict(src[v].attrs)
                 remap_src[v] = src[v] * src["thknss"]
 
-    weights_path = _resolve_weights(weights, remap_src, lon, lat, method,
-                                    periodic, tgt=tgt)
+    weights_path = _resolve_weights(
+        weights, remap_src, lon, lat, method, periodic, tgt=tgt
+    )
     reuse = weights_path is not None and os.path.exists(weights_path)
     regridder = xe.Regridder(
-        remap_src, target_ds, method=method, periodic=periodic,
-        ignore_degenerate=True, unmapped_to_nan=True,
+        remap_src,
+        target_ds,
+        method=method,
+        periodic=periodic,
+        ignore_degenerate=True,
+        unmapped_to_nan=True,
         weights=weights_path if reuse else None,
     )
     if weights_path is not None and not reuse:
@@ -615,7 +642,7 @@ def regrid_horizontal(ds: xr.Dataset, lon: "ArrayLike | None" = None,
     return out
 
 
-def _layer_dim(thknss: xr.DataArray) -> "str | None":
+def _layer_dim(thknss: xr.DataArray) -> str | None:
     """The vertical (layer) dimension of a thickness field, or ``None``.
 
     The layer dim is the one that is neither horizontal nor time.
@@ -635,8 +662,7 @@ def _edges_1d(centres: ArrayLike) -> np.ndarray:
     return np.concatenate([[first], mid, [last]])
 
 
-def _add_source_bounds(src: xr.Dataset,
-                       grid: "xr.Dataset | None") -> xr.Dataset:
+def _add_source_bounds(src: xr.Dataset, grid: xr.Dataset | None) -> xr.Dataset:
     """Attach 2-D corner bounds (lon_b/lat_b) to the curvilinear source grid.
 
     HYCOM ``qlon`` / ``qlat`` are the vorticity points sitting at the SW corner
@@ -662,13 +688,13 @@ def _q_to_corners(q: np.ndarray) -> np.ndarray:
     ny, nx = q.shape
     out = np.empty((ny + 1, nx + 1), dtype="float64")
     out[:ny, :nx] = q
-    out[:ny, nx] = q[:, -1] + (q[:, -1] - q[:, -2])     # extra east column
-    out[ny, :nx] = q[-1, :] + (q[-1, :] - q[-2, :])     # extra north row
+    out[:ny, nx] = q[:, -1] + (q[:, -1] - q[:, -2])  # extra east column
+    out[ny, :nx] = q[-1, :] + (q[-1, :] - q[-2, :])  # extra north row
     out[ny, nx] = out[ny - 1, nx] + (out[ny - 1, nx] - out[ny - 2, nx])
     return out
 
 
-def _get_pang(ds: xr.Dataset, grid: "xr.Dataset | None") -> xr.DataArray:
+def _get_pang(ds: xr.Dataset, grid: xr.Dataset | None) -> xr.DataArray:
     """Locate the grid rotation angle (radians) on the T-grid."""
     if "pang" in ds.coords or "pang" in ds:
         return ds["pang"]
@@ -683,8 +709,7 @@ def _get_pang(ds: xr.Dataset, grid: "xr.Dataset | None") -> xr.DataArray:
     )
 
 
-def _ocean_mask(ds: xr.Dataset,
-                mask_var: "str | None") -> "xr.DataArray | None":
+def _ocean_mask(ds: xr.Dataset, mask_var: str | None) -> xr.DataArray | None:
     """2-D (y, x) ocean mask (1 ocean, 0 land) from a representative field."""
     if mask_var is None:
         for cand in ("temp", "thknss"):
@@ -700,7 +725,7 @@ def _ocean_mask(ds: xr.Dataset,
     # pulls in eagerly when the regridder is constructed — swamping any
     # weight-cache saving.  Take the first step instead.
     if "time" in da.dims:
-        da = da.isel(time=0, drop=True)   # drop=True: no scalar 'time' coord left
+        da = da.isel(time=0, drop=True)  # drop=True: no scalar 'time' coord left
     reduce_dims = [d for d in da.dims if d not in ("y", "x")]
     finite = np.isfinite(da)
     if reduce_dims:
@@ -711,9 +736,13 @@ def _ocean_mask(ds: xr.Dataset,
 # ---------------------------------------------------------------------------
 # Reverse: a regular lon/lat product (e.g. GLORYS) -> HYCOM curvilinear grid
 # ---------------------------------------------------------------------------
-def _resolve_weights_to_hycom(weights: "str | os.PathLike | bool | None",
-                              src: xr.Dataset, grid: xr.Dataset,
-                              method: str, periodic: bool) -> "str | None":
+def _resolve_weights_to_hycom(
+    weights: str | os.PathLike | bool | None,
+    src: xr.Dataset,
+    grid: xr.Dataset,
+    method: str,
+    periodic: bool,
+) -> str | None:
     """Weights-file path for the reverse (product -> HYCOM) remap, or ``None``.
 
     Mirrors :func:`_resolve_weights` but keyed the other way round: the regular
@@ -742,12 +771,15 @@ def _resolve_weights_to_hycom(weights: "str | os.PathLike | bool | None",
     return path
 
 
-def regrid_to_hycom(product: "xr.Dataset | xr.DataArray | str",
-                    grid: "xr.Dataset | str", *,
-                    method: str = "bilinear", periodic: bool = False,
-                    like: "xr.Dataset | None" = None,
-                    weights: "str | os.PathLike | bool | None" = None,
-                    ) -> xr.Dataset:
+def regrid_to_hycom(
+    product: xr.Dataset | xr.DataArray | str,
+    grid: xr.Dataset | str,
+    *,
+    method: str = "bilinear",
+    periodic: bool = False,
+    like: xr.Dataset | None = None,
+    weights: str | os.PathLike | bool | None = None,
+) -> xr.Dataset:
     """Regrid a regular lon/lat product onto the HYCOM curvilinear ``(y, x)`` grid.
 
     The lateral inverse of :func:`regrid_horizontal`: a regular product such as
@@ -814,8 +846,11 @@ def regrid_to_hycom(product: "xr.Dataset | xr.DataArray | str",
 
     src = _open_target(product)
     # Standardise the product's horizontal coordinate names to lon/lat.
-    rename = {old: new for old, new in (("longitude", "lon"), ("latitude", "lat"))
-              if old in src.variables}
+    rename = {
+        old: new
+        for old, new in (("longitude", "lon"), ("latitude", "lat"))
+        if old in src.variables
+    }
     src = src.rename(rename)
     if "lon" not in src.variables or "lat" not in src.variables:
         raise ValueError(
@@ -846,8 +881,12 @@ def regrid_to_hycom(product: "xr.Dataset | xr.DataArray | str",
     weights_path = _resolve_weights_to_hycom(weights, src, grid, method, periodic)
     reuse = weights_path is not None and os.path.exists(weights_path)
     regridder = xe.Regridder(
-        src, target_ds, method=method, periodic=periodic,
-        ignore_degenerate=True, unmapped_to_nan=True,
+        src,
+        target_ds,
+        method=method,
+        periodic=periodic,
+        ignore_degenerate=True,
+        unmapped_to_nan=True,
         weights=weights_path if reuse else None,
     )
     if weights_path is not None and not reuse:
@@ -855,26 +894,32 @@ def regrid_to_hycom(product: "xr.Dataset | xr.DataArray | str",
 
     # Regrid only the fields that actually carry the horizontal dims; pass the
     # rest (1-D depth helpers, scalars) through untouched.
-    spatial = [v for v in src.data_vars
-               if "lon" in src[v].dims and "lat" in src[v].dims]
+    spatial = [
+        v for v in src.data_vars if "lon" in src[v].dims and "lat" in src[v].dims
+    ]
     out = regridder(src[spatial], keep_attrs=True, skipna=True)
     out = out.assign_coords(lon=(("y", "x"), plon), lat=(("y", "x"), plat))
 
     if like is not None:
         mask = _ocean_mask(like, None)
         if mask is not None:
-            out = out.where(xr.DataArray(np.asarray(mask.values).astype(bool),
-                                         dims=("y", "x")))
+            out = out.where(
+                xr.DataArray(np.asarray(mask.values).astype(bool), dims=("y", "x"))
+            )
     return out
 
 
 # ---------------------------------------------------------------------------
 # Vertical: hybrid layers -> fixed depth levels (xgcm)
 # ---------------------------------------------------------------------------
-def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
-                    method: str = "conservative", mask_edges: bool = True,
-                    layer_dim: str = "k",
-                    variables: "list[str] | None" = None) -> xr.Dataset:
+def regrid_vertical(
+    ds: xr.Dataset,
+    depth: ArrayLike,
+    method: str = "conservative",
+    mask_edges: bool = True,
+    layer_dim: str = "k",
+    variables: list[str] | None = None,
+) -> xr.Dataset:
     """Regrid HYCOM layered variables onto fixed depth levels.
 
     Layer-centre depths are reconstructed from ``thknss`` (Pa -> m via
@@ -921,8 +966,9 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
     depth = np.asarray(depth, dtype="float64")
     conservative = method.startswith("conservative")
 
-    thknss_m = (ds["thknss"] if ds["thknss"].attrs.get("units") == "m"
-                else ds["thknss"] / _ONEM)
+    thknss_m = (
+        ds["thknss"] if ds["thknss"].attrs.get("units") == "m" else ds["thknss"] / _ONEM
+    )
 
     if conservative:
         # Conservative transform needs the layer *interfaces* (an "outer"
@@ -933,13 +979,16 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
         # divide — which also yields the correct mass-weighted mean in partly
         # filled bins.  Output lands on the bin centres.
         iface_dim = "z_i"
-        z_target = layer_interface_depth(ds["thknss"], layer_dim=layer_dim,
-                                         interface_dim=iface_dim)
+        z_target = layer_interface_depth(
+            ds["thknss"], layer_dim=layer_dim, interface_dim=iface_dim
+        )
         n_iface = z_target.sizes[iface_dim]
         ds_g = ds.assign_coords({iface_dim: np.arange(n_iface)})
         grid = xgcm.Grid(
-            ds_g, coords={"Z": {"center": layer_dim, "outer": iface_dim}},
-            periodic=False, autoparse_metadata=False,
+            ds_g,
+            coords={"Z": {"center": layer_dim, "outer": iface_dim}},
+            periodic=False,
+            autoparse_metadata=False,
         )
         # *depth* are the output levels (centres); build the surrounding bin
         # edges so the result lands on exactly those levels (consistent with
@@ -948,20 +997,27 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
         depth_out = depth
         # overlapping source thickness per target bin (shared denominator).
         thk_bin = grid.transform(
-            thknss_m, "Z", target=target_edges, target_data=z_target,
-            method=method, mask_edges=mask_edges,
+            thknss_m,
+            "Z",
+            target=target_edges,
+            target_data=z_target,
+            method=method,
+            mask_edges=mask_edges,
         )
     else:
         z_target = layer_centre_depth(ds["thknss"], layer_dim=layer_dim)
         grid = xgcm.Grid(
-            ds, coords={"Z": {"center": layer_dim}}, periodic=False,
+            ds,
+            coords={"Z": {"center": layer_dim}},
+            periodic=False,
             autoparse_metadata=False,
         )
         depth_out = depth
 
     if variables is None:
         variables = [
-            name for name, da in ds.data_vars.items()
+            name
+            for name, da in ds.data_vars.items()
             if layer_dim in da.dims and name != "thknss"
         ]
 
@@ -970,14 +1026,22 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
         da = ds[name]
         if conservative:
             content = grid.transform(
-                da * thknss_m, "Z", target=target_edges, target_data=z_target,
-                method=method, mask_edges=mask_edges,
+                da * thknss_m,
+                "Z",
+                target=target_edges,
+                target_data=z_target,
+                method=method,
+                mask_edges=mask_edges,
             )
             transformed = content / thk_bin.where(thk_bin > 0)
         else:
             transformed = grid.transform(
-                da, "Z", target=depth, target_data=z_target,
-                method=method, mask_edges=mask_edges,
+                da,
+                "Z",
+                target=depth,
+                target_data=z_target,
+                method=method,
+                mask_edges=mask_edges,
             )
         # xgcm names the new dim after target_data ("depth"); be defensive.
         if "depth" not in transformed.dims:
@@ -990,20 +1054,23 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
     # Carry through everything that didn't have the layer dimension
     # (2-D diagnostics, surface fields), excluding thknss.
     passthrough = {
-        name: da for name, da in ds.data_vars.items()
+        name: da
+        for name, da in ds.data_vars.items()
         if layer_dim not in da.dims and name != "thknss"
     }
 
     out = xr.Dataset({**passthrough, **out_vars}, attrs=ds.attrs)
-    out = out.assign_coords(depth=xr.Variable(
-        "depth", depth_out,
-        {"long_name": "depth", "units": "m", "positive": "down", "axis": "Z"},
-    ))
+    out = out.assign_coords(
+        depth=xr.Variable(
+            "depth",
+            depth_out,
+            {"long_name": "depth", "units": "m", "positive": "down", "axis": "Z"},
+        )
+    )
     return out
 
 
-def layer_centre_depth(thknss: xr.DataArray,
-                       layer_dim: str = "k") -> xr.DataArray:
+def layer_centre_depth(thknss: xr.DataArray, layer_dim: str = "k") -> xr.DataArray:
     """Layer-centre depths (metres, positive down) from HYCOM ``thknss`` (Pa).
 
     A tiny strictly-increasing ramp (0.1 mm per layer) is added so that
@@ -1023,13 +1090,17 @@ def layer_centre_depth(thknss: xr.DataArray,
     ramp = xr.DataArray(np.arange(n) * 1e-4, dims=[layer_dim])
     z_centre = z_centre + ramp
 
-    z_centre.attrs = {"long_name": "layer centre depth", "units": "m",
-                      "positive": "down"}
+    z_centre.attrs = {
+        "long_name": "layer centre depth",
+        "units": "m",
+        "positive": "down",
+    }
     return z_centre.rename("depth")
 
 
-def layer_interface_depth(thknss: xr.DataArray, layer_dim: str = "k",
-                          interface_dim: str = "z_i") -> xr.DataArray:
+def layer_interface_depth(
+    thknss: xr.DataArray, layer_dim: str = "k", interface_dim: str = "z_i"
+) -> xr.DataArray:
     """Layer-interface depths (metres, positive down) from HYCOM ``thknss``.
 
     Returns an ``N+1`` "outer" coordinate (surface at 0, then the cumulative
@@ -1061,24 +1132,35 @@ def layer_interface_depth(thknss: xr.DataArray, layer_dim: str = "k",
 
     ramp = xr.DataArray(np.arange(n + 1) * 1e-4, dims=[interface_dim])
     iface = (iface + ramp).rename("depth")
-    iface.attrs = {"long_name": "layer interface depth", "units": "m",
-                   "positive": "down"}
+    iface.attrs = {
+        "long_name": "layer interface depth",
+        "units": "m",
+        "positive": "down",
+    }
     return iface
 
 
 # ---------------------------------------------------------------------------
 # Convenience wrapper
 # ---------------------------------------------------------------------------
-def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
-           lat: "ArrayLike | None" = None, depth: "ArrayLike | None" = None,
-           grid: "xr.Dataset | str | None" = None,
-           target: "xr.Dataset | str | None" = None,
-           method: str = "conservative", z_method: str = "conservative",
-           periodic: bool = False, mask_edges: bool = True,
-           apply_target_mask: bool = True, subset_target: bool = True,
-           weights: "str | os.PathLike | bool | None" = None,
-           nan_pole: bool = True, order: str = "horizontal_first",
-           variables: "list[str] | None" = None) -> xr.Dataset:
+def regrid(
+    ds: xr.Dataset,
+    lon: ArrayLike | None = None,
+    lat: ArrayLike | None = None,
+    depth: ArrayLike | None = None,
+    grid: xr.Dataset | str | None = None,
+    target: xr.Dataset | str | None = None,
+    method: str = "conservative",
+    z_method: str = "conservative",
+    periodic: bool = False,
+    mask_edges: bool = True,
+    apply_target_mask: bool = True,
+    subset_target: bool = True,
+    weights: str | os.PathLike | bool | None = None,
+    nan_pole: bool = True,
+    order: str = "horizontal_first",
+    variables: list[str] | None = None,
+) -> xr.Dataset:
     """Regrid HYCOM output to a regular lon/lat/depth grid (lateral + vertical).
 
     Chains :func:`regrid_horizontal` and :func:`regrid_vertical`; *order* picks
@@ -1181,17 +1263,35 @@ def regrid(ds: xr.Dataset, lon: "ArrayLike | None" = None,
     if order == "horizontal_first":
         # Blend along the native (isopycnal) layers, then collapse to depth:
         # preserves water masses / the T-S relationship in the interior.
-        ds = regrid_horizontal(ds, lon, lat, grid=grid, method=method,
-                               periodic=periodic, weights=weights, nan_pole=False)
-        ds = regrid_vertical(ds, depth, method=z_method, mask_edges=mask_edges,
-                             variables=variables)
+        ds = regrid_horizontal(
+            ds,
+            lon,
+            lat,
+            grid=grid,
+            method=method,
+            periodic=periodic,
+            weights=weights,
+            nan_pole=False,
+        )
+        ds = regrid_vertical(
+            ds, depth, method=z_method, mask_edges=mask_edges, variables=variables
+        )
     elif order == "vertical_first":
         # Place each column on the depth levels first (honouring its own
         # bathymetry), then blend horizontally at constant depth.
-        ds = regrid_vertical(ds, depth, method=z_method, mask_edges=mask_edges,
-                             variables=variables)
-        ds = regrid_horizontal(ds, lon, lat, grid=grid, method=method,
-                               periodic=periodic, weights=weights, nan_pole=False)
+        ds = regrid_vertical(
+            ds, depth, method=z_method, mask_edges=mask_edges, variables=variables
+        )
+        ds = regrid_horizontal(
+            ds,
+            lon,
+            lat,
+            grid=grid,
+            method=method,
+            periodic=periodic,
+            weights=weights,
+            nan_pole=False,
+        )
     else:
         raise ValueError(
             f"order must be 'horizontal_first' or 'vertical_first', got {order!r}."

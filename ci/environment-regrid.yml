@@ -20,6 +20,7 @@ dependencies:
   # testing
   - pytest
   - pytest-cov
+  - pre-commit
   - pip
   - pip:
       - -e ..         # install xhycom itself in editable mode

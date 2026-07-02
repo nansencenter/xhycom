@@ -38,7 +38,7 @@ classifiers = [
 # conda-forge -- there is no pip-only path, and it stays optional since it
 # can conflict with other ESMF installs on some platforms.  Ready-made env:
 #     conda env create -f ci/environment-regrid.yml
-dev = ["pytest", "pytest-cov", "netCDF4"]
+dev = ["pytest", "pytest-cov", "netCDF4", "pre-commit"]
 docs = [
     "sphinx",
     "sphinx-book-theme",
@@ -66,3 +66,16 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["xhycom"]
 omit = ["tests/*"]
+
+[tool.ruff]
+fix = true
+show-fixes = true
+line-length = 88
+exclude = ["docs"]
+
+[tool.ruff.lint]
+extend-select = ["I", "E", "W", "F", "D", "RUF", "UP"]
+ignore = ["E501", "D205", "D102", "D100", "D401", "D101", "D105", "D103", "D104", "UP040", "RUF043", "RUF059", "UP031", "RUF001", "RUF002", "RUF003", "RUF012"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"

@@ -5,6 +5,7 @@ Public API
 open_dataset(path, ...)       Open any HYCOM .ab file pair (archv, grid, bathy).
 open_mfdataset(paths, ...)    Open a time series of archive snapshots.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -14,12 +15,23 @@ import xarray as xr
 
 from ._abfile import ABFile
 from ._discovery import find_archv_files
-from ._reader import detect_filetype, read_archv, read_bathy, read_grid, _read_archv_meta, _build_mf_lazy
+from ._postprocess import postprocess
+from ._reader import (
+    _build_mf_lazy,
+    _read_archv_meta,
+    detect_filetype,
+    read_archv,
+    read_bathy,
+    read_grid,
+)
 from ._regrid import (
-    regrid, regrid_horizontal, regrid_vertical, regrid_to_hycom,
+    regrid,
+    regrid_horizontal,
+    regrid_to_hycom,
+    regrid_vertical,
     velocities_east_north,
 )
-from ._postprocess import postprocess
+
 # Private alias so the public `postprocess` name can also be a keyword argument
 # on open_dataset / open_mfdataset without shadowing the function.
 _postprocess_ds = postprocess
@@ -31,8 +43,8 @@ __all__ = [
     "postprocess",
     "regrid",
     "regrid_horizontal",
-    "regrid_vertical",
     "regrid_to_hycom",
+    "regrid_vertical",
     "velocities_east_north",
 ]
 
@@ -48,7 +60,7 @@ _VEL_TOTAL = ("u-vel.", "v-vel.")
 _VEL_BTROP = ("u_btrop", "v_btrop")
 
 
-def _augment_velocity_vars(variables: "list[str] | None", postprocess: bool):
+def _augment_velocity_vars(variables: list[str] | None, postprocess: bool):
     """Pull in the barotropic velocity when velocities are requested + postprocess.
 
     Returns ``(variables_to_read, auto_added)``; *auto_added* are barotropic
@@ -63,13 +75,13 @@ def _augment_velocity_vars(variables: "list[str] | None", postprocess: bool):
     return list(variables) + auto, auto
 
 
-def _drop_auto(ds: xr.Dataset, auto: "list[str]") -> xr.Dataset:
+def _drop_auto(ds: xr.Dataset, auto: list[str]) -> xr.Dataset:
     """Drop the barotropic variables that were auto-added just to form the total."""
     drop = [v for v in auto if v in ds.variables]
     return ds.drop_vars(drop) if drop else ds
 
 
-def _load_grid(grid: GridArg, endian: str) -> "xr.Dataset | None":
+def _load_grid(grid: GridArg, endian: str) -> xr.Dataset | None:
     """Accept a path string or pre-loaded Dataset; return a Dataset."""
     if grid is None:
         return None
@@ -78,9 +90,14 @@ def _load_grid(grid: GridArg, endian: str) -> "xr.Dataset | None":
     return open_dataset(grid, endian=endian)
 
 
-def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
-                 chunks: Chunks = None, variables: "list[str] | None" = None,
-                 postprocess: bool = False) -> xr.Dataset:
+def open_dataset(
+    path: str,
+    grid: GridArg = None,
+    endian: str = "big",
+    chunks: Chunks = None,
+    variables: list[str] | None = None,
+    postprocess: bool = False,
+) -> xr.Dataset:
     """Open a HYCOM ``.ab`` file pair as an ``xr.Dataset``.
 
     Automatically detects the file type (archive, grid, or bathymetry) from
@@ -173,9 +190,16 @@ def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
 
     # Forward globs and directories to open_mfdataset.
     import os as _os
+
     if any(c in path for c in "*?[") or _os.path.isdir(path):
-        return open_mfdataset(path, grid=grid, endian=endian, chunks=chunks,
-                              variables=variables, postprocess=postprocess)
+        return open_mfdataset(
+            path,
+            grid=grid,
+            endian=endian,
+            chunks=chunks,
+            variables=variables,
+            postprocess=postprocess,
+        )
 
     basename = ABFile.strip_ab_ending(path)
     filetype = detect_filetype(basename)
@@ -188,8 +212,9 @@ def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
         # chunks is handled inside read_archv: data is never loaded eagerly
         # when chunks is set — Dask tasks are created instead.
         aug, auto = _augment_velocity_vars(variables, postprocess)
-        ds = read_archv(basename, grid_ds=grid_ds, endian=endian, chunks=chunks,
-                        variables=aug)
+        ds = read_archv(
+            basename, grid_ds=grid_ds, endian=endian, chunks=chunks, variables=aug
+        )
         if postprocess:
             ds = _drop_auto(_postprocess_ds(ds), auto)
         return ds
@@ -209,10 +234,15 @@ def open_dataset(path: str, grid: GridArg = None, endian: str = "big",
     return ds.chunk(chunks) if chunks is not None else ds
 
 
-def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
-                   endian: str = "big", skip_errors: bool = False,
-                   chunks: Chunks = None, variables: "list[str] | None" = None,
-                   postprocess: bool = False) -> xr.Dataset:
+def open_mfdataset(
+    paths: str | Iterable[str],
+    grid: GridArg = None,
+    endian: str = "big",
+    skip_errors: bool = False,
+    chunks: Chunks = None,
+    variables: list[str] | None = None,
+    postprocess: bool = False,
+) -> xr.Dataset:
     """Open multiple HYCOM archive ``.ab`` file pairs as a single ``xr.Dataset``.
 
     Snapshots are concatenated along a ``time`` dimension in chronological
@@ -295,8 +325,7 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
         meta_map: dict = {}
         with ThreadPoolExecutor() as executor:
             future_to_base = {
-                executor.submit(_read_archv_meta, bn, endian): bn
-                for bn in basenames
+                executor.submit(_read_archv_meta, bn, endian): bn for bn in basenames
             }
             for future in as_completed(future_to_base):
                 bn = future_to_base[future]
@@ -323,8 +352,14 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
         elif isinstance(chunks, int):
             time_chunk = chunks
 
-        ds = _build_mf_lazy(valid_basenames, metas, grid_ds, endian,
-                            variables=aug, time_chunk=time_chunk)
+        ds = _build_mf_lazy(
+            valid_basenames,
+            metas,
+            grid_ds,
+            endian,
+            variables=aug,
+            time_chunk=time_chunk,
+        )
         if postprocess:
             ds = _drop_auto(_postprocess_ds(ds), auto)
         return ds.chunk(chunks)
@@ -334,8 +369,9 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
         datasets = []
         for basename in basenames:
             try:
-                datasets.append(read_archv(basename, grid_ds=grid_ds, endian=endian,
-                                           variables=aug))
+                datasets.append(
+                    read_archv(basename, grid_ds=grid_ds, endian=endian, variables=aug)
+                )
             except Exception as exc:
                 if skip_errors:
                     warnings.warn(f"Skipping {basename!r}: {exc}", stacklevel=2)
@@ -346,7 +382,11 @@ def open_mfdataset(paths: "str | Iterable[str]", grid: GridArg = None,
             raise RuntimeError("No files were successfully opened.")
 
         ds = xr.concat(
-            datasets, dim="time", data_vars="minimal", coords="minimal", compat="override",
+            datasets,
+            dim="time",
+            data_vars="minimal",
+            coords="minimal",
+            compat="override",
         )
         if postprocess:
             return _drop_auto(_postprocess_ds(ds), auto)

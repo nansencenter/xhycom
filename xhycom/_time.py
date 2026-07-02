@@ -4,6 +4,7 @@ The ``forday`` function is adapted from modeltools.hycom._timetools
 (https://github.com/NoraLoose/NERSC-HYCOM-CICE), originally authored by
 Knut Lisaeter, MIT licence.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -12,17 +13,17 @@ import cftime
 
 # Map yrflag → CF calendar name
 _CALENDAR: dict[int, str] = {
-    0: "360_day",   # 360-day year, starts Jan 16
-    1: "366_day",   # 366-day year, starts Jan 16
-    2: "366_day",   # 366-day year, starts Jan  1
+    0: "360_day",  # 360-day year, starts Jan 16
+    1: "366_day",  # 366-day year, starts Jan 16
+    2: "366_day",  # 366-day year, starts Jan  1
     3: "standard",  # calendar days since 1901-01-01
-    4: "365_day",   # 365-day year, starts Jan  1
-    5: "365_day",   # 365-day year since 1901-01-01
+    4: "365_day",  # 365-day year, starts Jan  1
+    5: "365_day",  # 365-day year since 1901-01-01
 }
 
 
 def _leapyear(iyr: int) -> bool:
-    return not (iyr % 4 == 0 and 1901 + iyr % 400 == 0 or iyr % 4 != 0)
+    return not ((iyr % 4 == 0 and 1901 + iyr % 400 == 0) or iyr % 4 != 0)
 
 
 def _forday(dtime: float, yrflag: int) -> tuple[int, int, int]:
@@ -70,12 +71,12 @@ def _forday(dtime: float, yrflag: int) -> tuple[int, int, int]:
         iday = int(np.mod(dtime + 0.001, 365.0) + 1)
         ihour = int((np.mod(dtime + 0.001, 365.0) + 1.0 - iday) * 24.0)
     else:
-        raise ValueError(f"Unsupported yrflag {yrflag}. Must be 0–5.")
+        raise ValueError(f"Unsupported yrflag {yrflag}. Must be 0-5.")
 
     return iyear, iday, ihour
 
 
-def model_day_to_datetime(model_day: float, yrflag: int) -> "cftime.datetime":
+def model_day_to_datetime(model_day: float, yrflag: int) -> cftime.datetime:
     """Convert a HYCOM model day (float) to a ``cftime.datetime`` object.
 
     HYCOM stores time as a single floating-point "model day" whose meaning
@@ -86,7 +87,7 @@ def model_day_to_datetime(model_day: float, yrflag: int) -> "cftime.datetime":
     model_day : float
         HYCOM model day as stored in the archive ``.b`` header.
     yrflag : int
-        HYCOM year-flag (0–5).  Read from the ``.b`` header automatically
+        HYCOM year-flag (0-5).  Read from the ``.b`` header automatically
         when using :func:`xhycom.open_dataset`.
 
     Returns
@@ -97,7 +98,7 @@ def model_day_to_datetime(model_day: float, yrflag: int) -> "cftime.datetime":
     Raises
     ------
     ValueError
-        If ``yrflag`` is not one of the supported values (0–5).
+        If ``yrflag`` is not one of the supported values (0-5).
 
     Notes
     -----
@@ -120,7 +121,7 @@ def model_day_to_datetime(model_day: float, yrflag: int) -> "cftime.datetime":
     cftime.datetime(2013, 1, 1, 12, 0, 0, 0, has_year_zero=False)
     """
     if yrflag not in _CALENDAR:
-        raise ValueError(f"Unsupported yrflag {yrflag}. Must be 0–5.")
+        raise ValueError(f"Unsupported yrflag {yrflag}. Must be 0-5.")
 
     iy, id_, ih = _forday(float(model_day), yrflag)
     calendar = _CALENDAR[yrflag]
