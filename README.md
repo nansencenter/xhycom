@@ -1,5 +1,9 @@
 # xhycom
 
+[![Run Tests](https://github.com/nansencenter/xhycom/actions/workflows/tests.yml/badge.svg)](https://github.com/nansencenter/xhycom/actions/workflows/tests.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/nansencenter/xhycom/graph/badge.svg?token=5S1oNu39xE)](https://codecov.io/gh/nansencenter/xhycom)
+[![Documentation Status](https://readthedocs.org/projects/xhycom/badge/?version=latest)](https://xhycom.readthedocs.io/en/latest/?badge=latest)
+
 xhycom integrates HYCOM model output with [xarray](https://docs.xarray.dev) —
 giving every field a name, coordinates, units, and lazy out-of-memory access,
 directly from the native `.ab` format.
