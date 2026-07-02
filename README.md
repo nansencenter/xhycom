@@ -1,6 +1,6 @@
 # xhycom
 
-[![Run Tests](https://github.com/nansencenter/xhycom/actions/workflows/tests.yaml/badge.svg)](https://github.com/nansencenter/xhycom/actions/workflows/tests.yaml?query=branch%3Amain)
+[![Run Tests](https://github.com/nansencenter/xhycom/actions/workflows/tests.yml/badge.svg)](https://github.com/nansencenter/xhycom/actions/workflows/tests.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/nansencenter/xhycom/graph/badge.svg?token=5S1oNu39xE)](https://codecov.io/gh/nansencenter/xhycom)
 [![Documentation Status](https://readthedocs.org/projects/xhycom/badge/?version=latest)](https://xhycom.readthedocs.io/en/latest/?badge=latest)
 
