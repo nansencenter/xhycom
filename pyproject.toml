@@ -62,3 +62,7 @@ testpaths = ["tests"]
 # dask and xgcm are core dependencies, so reader/postprocess/vertical-regrid
 # tests run on the base + dev install. The lateral-regrid tests still
 # self-skip when xesmf is unavailable (conda-forge only, see above).
+
+[tool.coverage.run]
+source = ["xhycom"]
+omit = ["tests/*"]
