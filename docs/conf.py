@@ -15,6 +15,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "myst_nb",
     "sphinx_copybutton",
+    "sphinx_design",
 ]
 
 nb_execution_mode = "off"   # notebooks are pre-executed; don't re-run at build time
