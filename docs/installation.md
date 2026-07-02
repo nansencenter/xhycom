@@ -1,91 +1,138 @@
 # Installation
 
+## Horizontal regridding needs xESMF (conda)
+
+**Horizontal** regridding (`regrid_horizontal` and the full `regrid` wrapper) needs
+[xESMF](https://xesmf.readthedocs.io), whose ESMF/esmpy backend has no PyPI wheels
+and must come from conda-forge. `ci/environment-regrid.yml` creates the environment
+and installs xhycom into it in one step:
+
+```bash
+git clone https://github.com/NoraLoose/xhycom.git
+cd xhycom
+conda env create -f ci/environment-regrid.yml
+conda activate hycom-analysis-env
+```
+
 ## From GitHub
+
+If you don't need horizontal regridding:
 
 ```bash
 pip install git+https://github.com/NoraLoose/xhycom.git
 ```
 
-With lazy / Dask-backed loading:
+This includes lazy / Dask-backed loading and vertical regridding (`regrid_vertical`
+and depth interpolation) — both `dask` and `xgcm` are core, pip-installable
+dependencies.
 
-```bash
-pip install "xhycom[lazy] @ git+https://github.com/NoraLoose/xhycom.git"
-```
+## On Olivia / Betzy (NRIS)
 
-With regridding (vertical regridding and depth interpolation):
-
-```bash
-pip install "xhycom[regrid] @ git+https://github.com/NoraLoose/xhycom.git"
-```
-
-## Horizontal regridding needs xESMF (conda)
-
-`regrid_vertical` is pure Python and installs from PyPI via the `regrid` extra.
-**Horizontal** regridding (`regrid_horizontal` and the full `regrid` wrapper) also
-needs [xESMF](https://xesmf.readthedocs.io), whose ESMF/esmpy backend has no PyPI
-wheels — it must come from conda-forge. The ready-made environment installs the
-whole stack, including xhycom itself in editable mode:
-
-```bash
-conda env create -f ci/environment-regrid.yml
-conda activate xhycom-regrid
-```
-
-## On Olivia (NRIS)
-
-Use a **dedicated, lean conda environment for xhycom** — kept separate from the
-NERSC-HYCOM-CICE model environment so the regrid stack stays isolated. The repo ships
-the recipe in `ci/environment-regrid.yml` (xESMF/ESMF, xgcm, Dask, and xhycom — no model
-libraries).
-
-For interactive work — including running the example notebooks — the recommended entry
-point is **Open OnDemand**, the Olivia web portal (see the
-[NRIS documentation](https://documentation.sigma2.no/)): launch a JupyterLab or
-interactive desktop session and run your setup in its terminal.
+We can use a dedicated conda environment for HYCOM analysis with `xhycom`. The repo
+ships the recipe in `ci/environment-regrid.yml` (xESMF/ESMF, xgcm, Dask, JupyterLab,
+and xhycom), named `hycom-analysis-env`. **Olivia and Betzy build and activate this
+environment differently** — Betzy uses conda directly; Olivia uses
+[HPC-container-wrapper](https://documentation.sigma2.no/hpc_machines/olivia/software_stack.html#key-features-of-hpc-container-wrapper),
+which builds the environment inside a container instead.
 
 ### Build the environment (once)
 
-Load Miniforge (Olivia provides it through the module system — check the NRIS docs for
-the current module name), then create the environment in project space from your xhycom
-clone. Redirect the conda package cache to project space too, since `${HOME}` quota is
-small and ESMF is large:
+::::{dropdown} Betzy
+:open:
+
+Betzy only provides Miniforge3. First redirect the package cache and environments to
+project space, since `${HOME}` quota is limited — this is one-time setup, saved to
+`~/.condarc`:
 
 ```bash
-module load Miniforge3              # name/version per NRIS docs
+module load Miniforge3/24.1.2-0
 source ${EBROOTMINIFORGE3}/bin/activate
-conda config --append pkgs_dirs /cluster/projects/nn2993k/${USER}/conda/package-cache
-
-cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
-conda env create -f ci/environment-regrid.yml -p /cluster/projects/nn2993k/${USER}/xhycom-env
+conda config --append pkgs_dirs /cluster/projects/nn2993k/conda/${USER}/package-cache
+conda config --append envs_dirs /cluster/projects/nn2993k/conda/${USER}
 ```
 
-The `-p` prefix puts the environment under project space and overrides the `name:` in
-the file; `ci/environment-regrid.yml` installs xhycom from the clone in editable mode.
-
-### Environment setup
-
-Prepend the environment's `bin/` to your `PATH`, and point the regrid-weight cache at
-project space. Add these to your `~/.bashrc` (and to any batch job script):
+Then create the environment from the clone:
 
 ```bash
-export PATH="/cluster/projects/nn2993k/${USER}/xhycom-env/bin:${PATH}"
-export XHYCOM_CACHE_DIR=/cluster/projects/nn2993k/${USER}/hycom_cache_dir
+cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
+conda env create -f ci/environment-regrid.yml
+conda activate hycom-analysis-env
 ```
 
-Putting the environment's `bin/` first on `PATH` makes its `python`, `jupyter`, and
-`xhycom` resolve to the dedicated install — no `conda activate` needed, which is what you
-want inside Open OnDemand sessions. Start JupyterLab from a shell where these exports are
-active (e.g. via your `~/.bashrc`) so the notebooks run against this environment and
-reuse the cached regrid weights.
+The `envs_dirs` redirect means the named environment lands in project space
+automatically — no `-p` prefix needed.
+::::
+
+::::{dropdown} Olivia
+
+Load the container wrapper (session-only — no need to add these to `~/.bashrc`):
+
+```bash
+export http_proxy=http://10.63.2.48:3128/
+export https_proxy=http://10.63.2.48:3128/
+module load NRIS/CPU
+module load hpc-container-wrapper
+```
+
+Build the environment as a container in project space, from the clone:
+
+```bash
+cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
+conda-containerize new --mamba \
+    --prefix /cluster/projects/nn2993k/${USER}/hycom-analysis-env \
+    ci/environment-regrid.yml
+```
+
+Keep `--prefix`'s directory around permanently — it holds the container and
+executables. Since the containerised environment can't be modified in place, rebuild
+with the same command (after removing the old prefix) if `ci/environment-regrid.yml`
+changes.
+::::
+
+### Start JupyterLab via Open OnDemand
+
+For interactive work — including running the example notebooks — start a **JupyterLab**
+session through **Open OnDemand**:
+
+- Betzy: <https://apps.betzy.sigma2.no/pun/sys/dashboard>
+- Olivia: <https://apps.olivia.sigma2.no/pun/sys/dashboard>
+
+Click **JupyterLab**, and paste the appropriate snippet below into the app's
+*Environment setup* field before launching — this runs before the Jupyter server
+starts and makes the `hycom-analysis-env` environment (`python`, `jupyter`, `xhycom`)
+the one the session runs against, reusing the same cached regrid weights across
+sessions.
+
+::::{dropdown} Betzy
+:open:
+
+Load the module system first, then activate the environment by name:
+
+```bash
+module load Miniforge3/24.1.2-0
+source ${EBROOTMINIFORGE3}/bin/activate
+conda activate hycom-analysis-env
+export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
+```
+::::
+
+::::{dropdown} Olivia
+
+The containerised environment is activated by prepending its `bin/` to `PATH` (no
+`conda activate` needed):
+
+```bash
+export PATH="/cluster/projects/nn2993k/${USER}/hycom-analysis-env/bin:${PATH}"
+export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
+```
+::::
 
 ## Editable / development install
 
 ```bash
 git clone https://github.com/NoraLoose/xhycom.git
 cd xhycom
-pip install -e .            # core only
-pip install -e ".[lazy]"    # with Dask
-pip install -e ".[regrid]"  # with vertical regridding (xgcm + Dask)
+pip install -e .            # core (includes Dask + xgcm)
 pip install -e ".[dev]"     # with test dependencies
 ```
 
@@ -103,12 +150,15 @@ variable to put it somewhere else; weight files and the manifest are then writte
 the same weights are reused across jobs and by collaborators:
 
 ```bash
-export XHYCOM_CACHE_DIR=/cluster/projects/nn2993k/${USER}/hycom_cache_dir
+export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
 ```
 
-To make it stick across sessions and batch jobs, add that line to your `~/.bashrc`
-(or the job script that launches your runs). On Olivia, use the shared environment and
-this cache together — see [On Olivia (NRIS)](#on-olivia-nris).
+A leading `.` keeps it out of the way of a plain `ls` alongside your other project-space
+directories, same as `~/.cache`.
+
+Always add that export to your `~/.bashrc`, even if you also put it in the Open
+OnDemand *Environment setup* field (see
+[On Olivia / Betzy (NRIS)](#on-olivia-betzy-nris)) or a batch job script. 
 
 ## Dependencies
 
@@ -119,12 +169,13 @@ this cache together — see [On Olivia (NRIS)](#on-olivia-nris).
 | `numpy` | Array operations and binary I/O |
 | `xarray` | Dataset construction |
 | `cftime` | Calendar-aware datetime objects |
+| `dask` | Lazy / out-of-core loading via the `chunks` parameter in `open_dataset` and `open_mfdataset` |
+| `xgcm` | Vertical regridding (`regrid_vertical`) and depth interpolation |
 
-xhycom bundles its own HYCOM binary reader — there are no other required install-time dependencies.
+xhycom bundles its own HYCOM binary reader — pip installs everything needed for reading, lazy loading, and vertical regridding.
 
 ### Optional
 
-| Extra | Package(s) | Purpose |
-|-------|------------|---------|
-| `lazy` | `dask` | Lazy / out-of-core loading via the `chunks` parameter in `open_dataset` and `open_mfdataset` |
-| `regrid` | `xgcm`, `dask` | Vertical regridding (`regrid_vertical`) and depth interpolation. Horizontal regridding additionally needs `xesmf` from conda-forge (see above). |
+| Package | Purpose |
+|---------|---------|
+| `xesmf` (conda-forge only) | Horizontal regridding (`regrid_horizontal` and the full `regrid` wrapper). Kept optional since its ESMF/esmpy backend can conflict with other ESMF installs on some platforms (see above). |
