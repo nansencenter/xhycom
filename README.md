@@ -15,7 +15,9 @@ or external binary readers required. This covers reading, lazy/out-of-memory
 loading, and vertical regridding.
 
 Horizontal regridding additionally needs [xESMF](https://xesmf.readthedocs.io),
-whose ESMF/esmpy backend is conda-forge only:
+whose ESMF/esmpy backend is conda-forge only. `ci/environment-regrid.yml` creates
+the environment and `pip install`s xhycom itself (in editable mode) into it in one
+step:
 
 ```bash
 conda env create -f ci/environment-regrid.yml

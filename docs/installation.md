@@ -51,7 +51,8 @@ conda config --append pkgs_dirs /cluster/projects/nn2993k/conda/${USER}/package-
 conda config --append envs_dirs /cluster/projects/nn2993k/conda/${USER}
 ```
 
-Then create the environment from the clone:
+Then create the environment from the clone — this also `pip install`s xhycom itself
+(in editable mode, from the clone) as part of `ci/environment-regrid.yml`:
 
 ```bash
 cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
@@ -74,7 +75,9 @@ module load NRIS/CPU
 module load hpc-container-wrapper
 ```
 
-Build the environment as a container in project space, from the clone:
+Build the environment as a container in project space, from the clone — this also
+`pip install`s xhycom itself (in editable mode, from the clone) as part of
+`ci/environment-regrid.yml`:
 
 ```bash
 cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
