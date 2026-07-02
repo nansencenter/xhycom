@@ -317,20 +317,26 @@ def test_weights_cache_auto_keyed_by_geometry(tmp_path, monkeypatch):
     assert (tmp_path / "manifest.json").exists()
 
 
-def test_nan_pole_blanks_lat_90_row_by_default():
+def test_nan_pole_blanks_lat_90_row_by_default(tp0):
     pytest.importorskip("xesmf")
-    ds = _curvilinear_ds()
-    lat = np.array([42.0, 60.0, 90.0])          # includes the exact pole row
+    # The synthetic _curvilinear_ds fixture only spans lat 40..50, so bilinear
+    # regrid is NaN outside that range regardless of nan_pole — not a useful
+    # check for pole-blanking specifically. TP0's real curvilinear grid
+    # reaches ~89.6 N, close enough to the pole that bilinear extrapolation
+    # to lat=90 is finite, so nan_pole is the only thing that can blank it.
+    ds = xhycom.open_dataset(tp0.archive, grid=tp0.grid)
+    lat = np.array([65.0, 70.0, 90.0])           # 70 N is open ocean, not land
     lon = np.linspace(2, 8, 7)
     # Default (nan_pole=True): the grid is unchanged but the pole row is NaN.
-    out = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear")
+    out = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, grid=tp0.grid,
+                                   method="bilinear")
     np.testing.assert_array_equal(out["lat"].values, lat)   # row kept
     assert bool(np.isnan(out["temp"].sel(lat=90.0)).all())  # but blanked
-    assert not bool(np.isnan(out["temp"].sel(lat=60.0)).all())
+    assert not bool(np.isnan(out["temp"].sel(lat=70.0)).all())
 
     # nan_pole=False keeps the raw remapped pole value.
-    raw = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, method="bilinear",
-                                   nan_pole=False)
+    raw = xhycom.regrid_horizontal(ds, lon=lon, lat=lat, grid=tp0.grid,
+                                   method="bilinear", nan_pole=False)
     np.testing.assert_array_equal(raw["lat"].values, lat)
     assert bool(np.isfinite(raw["temp"].sel(lat=90.0)).any())
 

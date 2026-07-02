@@ -16,6 +16,8 @@ dependencies = [
     "cftime",
     "dask",
     "xgcm",
+    "numba",   # required by xgcm's Grid.transform for method="conservative"
+               # (regrid_vertical's default)
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -36,7 +38,7 @@ classifiers = [
 # conda-forge -- there is no pip-only path, and it stays optional since it
 # can conflict with other ESMF installs on some platforms.  Ready-made env:
 #     conda env create -f ci/environment-regrid.yml
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "netCDF4"]
 docs = [
     "sphinx",
     "sphinx-book-theme",
