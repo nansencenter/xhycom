@@ -18,12 +18,11 @@ module provides three composable functions:
 * :func:`regrid_vertical`   — hybrid layers → fixed depth levels (xgcm).
 * :func:`regrid`            — convenience wrapper that chains both.
 
-The heavy dependencies are imported lazily so that ``import xhycom`` works
-without them:
-
-* Vertical regridding needs only ``xgcm`` (pip): ``pip install xhycom[regrid]``.
-* Lateral regridding additionally needs ``xesmf``, whose ESMF/esmpy backend is
-  conda-only (no PyPI wheels): ``conda env create -f ci/environment-regrid.yml``.
+``dask`` and ``xgcm`` are core dependencies, so vertical regridding works out
+of the box. Lateral regridding additionally needs ``xesmf``, whose ESMF/esmpy
+backend is conda-only (no PyPI wheels) and can conflict with other ESMF
+installs on some platforms, so it stays optional and is imported lazily:
+``conda env create -f ci/environment-regrid.yml``.
 """
 from __future__ import annotations
 
@@ -911,13 +910,7 @@ def regrid_vertical(ds: xr.Dataset, depth: ArrayLike,
         coordinate (``positive='down'``).  2-D fields are carried through
         unchanged.
     """
-    try:
-        import xgcm
-    except ImportError as exc:  # pragma: no cover
-        raise ImportError(
-            "regrid_vertical requires xgcm. Install with: pip install xgcm "
-            "(or use the 'regrid' extra)."
-        ) from exc
+    import xgcm
 
     if "thknss" not in ds:
         raise ValueError(
