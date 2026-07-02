@@ -8,7 +8,7 @@ and must come from conda-forge. `ci/environment-regrid.yml` creates the environm
 and installs xhycom into it in one step:
 
 ```bash
-git clone https://github.com/NoraLoose/xhycom.git
+git clone https://github.com/nansencenter/xhycom.git
 cd xhycom
 conda env create -f ci/environment-regrid.yml
 conda activate hycom-analysis-env
@@ -19,7 +19,7 @@ conda activate hycom-analysis-env
 If you don't need horizontal regridding:
 
 ```bash
-pip install git+https://github.com/NoraLoose/xhycom.git
+pip install git+https://github.com/nansencenter/xhycom.git
 ```
 
 This includes lazy / Dask-backed loading and vertical regridding (`regrid_vertical`
@@ -133,7 +133,7 @@ export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
 ## Editable / development install
 
 ```bash
-git clone https://github.com/NoraLoose/xhycom.git
+git clone https://github.com/nansencenter/xhycom.git
 cd xhycom
 pip install -e .            # core (includes Dask + xgcm)
 pip install -e ".[dev]"     # with test dependencies
