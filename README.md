@@ -10,8 +10,20 @@ directly from the native `.ab` format.
 pip install git+https://github.com/NoraLoose/xhycom.git
 ```
 
-**Dependencies:** `numpy`, `xarray`, `cftime` — no Fortran compiler or
-external binary readers required.
+**Dependencies:** `numpy`, `xarray`, `cftime`, `dask`, `xgcm` — no Fortran compiler
+or external binary readers required. This covers reading, lazy/out-of-memory
+loading, and vertical regridding.
+
+Horizontal regridding additionally needs [xESMF](https://xesmf.readthedocs.io),
+whose ESMF/esmpy backend is conda-forge only:
+
+```bash
+conda env create -f ci/environment-regrid.yml
+conda activate hycom-analysis-env
+```
+
+See [Installation](https://xhycom.readthedocs.io/en/latest/installation.html) for
+details, including setup on the Olivia and Betzy HPC clusters.
 
 ## Quick example
 
