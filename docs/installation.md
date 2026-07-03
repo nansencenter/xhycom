@@ -82,7 +82,7 @@ Build the environment as a container in project space, from the clone — this a
 ```bash
 cd ${HOME}/xhycom                   # your xhycom clone (holds ci/environment-regrid.yml)
 conda-containerize new --mamba \
-    --prefix /cluster/projects/nn2993k/${USER}/hycom-analysis-env \
+    --prefix /cluster/projects/nn2993k/conda/${USER}/hycom-analysis-env \
     ci/environment-regrid.yml
 ```
 
@@ -125,7 +125,7 @@ The containerised environment is activated by prepending its `bin/` to `PATH` (n
 `conda activate` needed):
 
 ```bash
-export PATH="/cluster/projects/nn2993k/${USER}/hycom-analysis-env/bin:${PATH}"
+export PATH="/cluster/projects/nn2993k/conda/${USER}/hycom-analysis-env/bin:${PATH}"
 export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
 ```
 ::::
