@@ -190,3 +190,15 @@ def test_archive_type_mean(tp0):
     ds = xhycom.open_dataset(tp0.archive, postprocess=True)
     assert ds.attrs["archive_type"] == "mean"
     assert ds["u-vel."].attrs["hycom_velocity"] == "total"
+
+
+def test_open_ave_chunks(ave_file: str) -> None:
+    """read_ave with chunks= loads lazily via Dask."""
+    pytest.importorskip("dask")
+    ds = read_ave(ave_file, chunks={"k": 1})
+    assert ds["temp"].chunks is not None
+    np.testing.assert_allclose(
+        ds["temp"].isel(time=0, y=0, x=0).values,
+        [9.0, 8.0, 7.0],
+        rtol=1e-5,
+    )
