@@ -16,6 +16,7 @@ lazy-loading.ipynb
 analysis.ipynb
 regridding.ipynb
 time-averaging.ipynb
+big-computations.ipynb
 api
 contributing
 ```
