@@ -395,3 +395,39 @@ class ABFileArchv(ABFile):
     @property
     def yrflag(self) -> int | None:
         return self._yrflag
+
+
+class ABFileAve(ABFileArchv):
+    """HYCOM AVE .a/.b file pair, produced by hycave/ensave (MSCPROGS).
+
+    The header extends the archv format with ``kdm``, ``month``, ``year``,
+    and ``count`` entries before the field-column header.
+    """
+
+    def read_header(self) -> None:
+        self._header = [self.readline() for _ in range(4)]
+        _, self._iversn = self.scanitem(item="iversn", conversion=int)
+        _, self._iexpt = self.scanitem(item="iexpt", conversion=int)
+        _, self._yrflag = self.scanitem(item="yrflag", conversion=int)
+        _, self._idm = self.scanitem(item="idm", conversion=int)
+        _, self._jdm = self.scanitem(item="jdm", conversion=int)
+        _, self._kdm = self.scanitem(item="kdm", conversion=int)
+        _, self._month = self.scanitem(item="month", conversion=int)
+        _, self._year = self.scanitem(item="year", conversion=int)
+        _, self._count = self.scanitem(item="count", conversion=int)
+
+    @property
+    def kdm(self) -> int | None:
+        return getattr(self, "_kdm", None)
+
+    @property
+    def month(self) -> int | None:
+        return getattr(self, "_month", None)
+
+    @property
+    def year(self) -> int | None:
+        return getattr(self, "_year", None)
+
+    @property
+    def count(self) -> int | None:
+        return getattr(self, "_count", None)

@@ -6,11 +6,13 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+import cftime
 import numpy as np
 import xarray as xr
 
 from ._abfile import (
     ABFileArchv,
+    ABFileAve,
     ABFileBathy,
     ABFileGrid,
     grid_ordered_fieldnames,
@@ -273,8 +275,10 @@ def detect_filetype(basename: str) -> str:
         If the file type cannot be determined.
     """
     with open(basename + ".b") as f:
-        header = f.read(512)
+        header = f.read(1024)
 
+    if re.search(r"'iversn'", header) and re.search(r"'kdm\s+'", header):
+        return "ave"
     if re.search(r"'iversn'", header):
         return "archv"
     if re.search(r"'mapflg'", header):
@@ -291,7 +295,7 @@ def detect_filetype(basename: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Lazy-loading helper (module-level so Dask can serialise it)
+# Lazy-loading helpers (module-level so Dask can serialise them)
 # ---------------------------------------------------------------------------
 
 
@@ -317,6 +321,17 @@ def _read_var_lazy(basename: str, record_indices: list[int], endian: str) -> np.
     slabs = [_fill(af.read_record(i)) for i in record_indices]
     af.close()
     return slabs[0] if len(slabs) == 1 else np.stack(slabs, axis=0)
+
+
+def _read_record_lazy_ave(basename: str, record_idx: int, endian: str) -> np.ndarray:
+    """Open an AVE archive and read one 2-D slab by record index.
+
+    Module-level so Dask can serialise it across workers.
+    """
+    af = ABFileAve(basename, "r", endian=endian)
+    raw = af.read_record(record_idx)
+    af.close()
+    return _fill(raw)
 
 
 def _read_var_group_lazy(
@@ -395,6 +410,61 @@ def _read_archv_meta(basename: str, endian: str = "big") -> dict[str, Any]:
         "global_kdens": _compute_global_kdens(field_kdens),
         "time": time,
         "is_mean": is_mean,
+    }
+
+
+def _parse_ave_time(basename: str) -> cftime.datetime | None:
+    """Parse year and month from an AVE basename (e.g. ``TP4AVE_1991_01``).
+
+    Returns a ``cftime.datetime`` at day 1 of the month, or ``None`` if the
+    basename does not end with ``_YYYY_MM``.
+    """
+    m = re.search(r"_(\d{4})_(\d{2})$", basename)
+    if m:
+        return cftime.datetime(int(m.group(1)), int(m.group(2)), 1)
+    return None
+
+
+def _read_ave_meta(basename: str, endian: str = "big") -> dict[str, Any]:
+    """Parse the .b header of an AVE file, returning metadata without reading .a data.
+
+    Returns a dict with keys: field_kdens, field_k_record, jdm, idm, yrflag,
+    iversn, iexpt, time.
+    """
+    af = ABFileAve(basename, "r", endian=endian)
+
+    pair_count: Counter = Counter()
+    for rec in af.fields.values():
+        pair_count[(rec["field"], rec["k"])] += 1
+
+    name_running: defaultdict = defaultdict(int)
+    field_kdens: defaultdict = defaultdict(dict)
+    field_k_record: defaultdict = defaultdict(dict)
+
+    for i, rec in af.fields.items():
+        fname = rec["field"]
+        k = rec["k"]
+        pair = (fname, k)
+        name_running[pair] += 1
+        uname = f"{fname}_{name_running[pair]}" if pair_count[pair] > 1 else fname
+        field_kdens[uname][k] = rec["dens"]
+        field_k_record[uname][k] = i
+
+    jdm, idm = af.jdm, af.idm
+    yrflag = af.yrflag
+    iversn = af.iversn
+    iexpt = af.iexpt
+    af.close()
+
+    return {
+        "field_kdens": dict(field_kdens),
+        "field_k_record": dict(field_k_record),
+        "jdm": jdm,
+        "idm": idm,
+        "yrflag": yrflag,
+        "iversn": iversn,
+        "iexpt": iexpt,
+        "time": _parse_ave_time(basename),
     }
 
 
@@ -700,6 +770,129 @@ def read_archv(
                 {"long_name": "target sigma-2 layer density", "units": "kg m-3"},
             )
         )
+
+    if meta["time"] is not None:
+        ds = ds.expand_dims({"time": [meta["time"]]})
+        ds["time"].attrs = {"long_name": "time", "axis": "T"}
+
+    if chunks is not None:
+        ds = ds.chunk(chunks)
+
+    return ds
+
+
+def read_ave(
+    basename: str,
+    grid_ds: xr.Dataset | None = None,
+    endian: str = "big",
+    chunks: Any = None,
+    variables: list[str] | None = None,
+) -> xr.Dataset:
+    """Read a HYCOM AVE ``.ab`` file pair into an ``xr.Dataset``.
+
+    AVE files are time-averages produced by hycave/ensave (MSCPROGS).  They
+    share the archive binary layout but carry extra header entries (``kdm``,
+    ``month``, ``year``, ``count``).  Time is parsed from the basename rather
+    than from the model-day field, which is always zero in AVE files.
+
+    Parameters
+    ----------
+    basename : str
+        Path without the ``.a`` / ``.b`` extension.  Should end with
+        ``_YYYY_MM`` (e.g. ``TP4AVE_1991_01``) for automatic time assignment.
+    grid_ds : xr.Dataset, optional
+        Pre-loaded grid Dataset for attaching ``lon`` / ``lat`` coordinates.
+    endian : str
+        Byte order of the ``.a`` file (``"big"`` or ``"little"``).
+    chunks : int, dict, "auto", or None
+        Passed to ``ds.chunk()`` for lazy Dask loading.
+    variables : list of str, optional
+        Subset of variables to load; others are silently skipped.
+    """
+    meta = _read_ave_meta(basename, endian=endian)
+
+    field_kdens = meta["field_kdens"]
+    field_k_record = meta["field_k_record"]
+
+    if variables is not None:
+        field_kdens, field_k_record = _apply_variables_filter(
+            field_kdens, field_k_record, variables, source=basename
+        )
+
+    jdm, idm = meta["jdm"], meta["idm"]
+    global_attrs = {
+        "iversn": meta["iversn"],
+        "iexpt": meta["iexpt"],
+        "yrflag": meta["yrflag"],
+        "archive_type": "time_average",
+    }
+
+    if chunks is not None:
+        try:
+            import dask
+            import dask.array as da
+        except ImportError:
+            raise ImportError(
+                "Dask is required for lazy/chunked loading. "
+                "Install it with: pip install dask"
+            )
+
+        def _get_slab(uname, k):
+            return da.from_delayed(
+                dask.delayed(_read_record_lazy_ave)(
+                    basename, field_k_record[uname][k], endian
+                ),
+                shape=(jdm, idm),
+                dtype=np.float64,
+            )
+
+        def _stack(slabs):
+            return da.stack(slabs, axis=0)
+
+    else:
+        af = ABFileAve(basename, "r", endian=endian)
+
+        def _get_slab(uname, k):
+            return _fill(af.read_record(field_k_record[uname][k]))
+
+        def _stack(slabs):
+            return np.stack(slabs)
+
+    data_vars = {}
+    for uname, kdens in field_kdens.items():
+        levels = sorted(kdens)
+        h_coords = _h_coords(uname, grid_ds)
+        attrs = _attrs_for(uname)
+        if len(levels) == 1:
+            data_vars[uname] = xr.DataArray(
+                _get_slab(uname, levels[0]),
+                dims=["y", "x"],
+                coords=h_coords,
+                attrs=attrs,
+                name=uname,
+            )
+        else:
+            vdim = _v_dim(levels)
+            vdim_attrs = (
+                {"long_name": "layer index", "units": "1", "axis": "Z"}
+                if vdim == "k"
+                else {"long_name": "layer interface index", "units": "1", "axis": "Z"}
+            )
+            arr = _stack([_get_slab(uname, k) for k in levels])
+            coords = dict(h_coords)
+            coords[vdim] = (vdim, levels, vdim_attrs)
+            data_vars[uname] = xr.DataArray(
+                arr,
+                dims=[vdim, "y", "x"],
+                coords=coords,
+                attrs=attrs,
+                name=uname,
+            )
+
+    if chunks is None:
+        af.close()
+
+    ds = xr.Dataset(data_vars, attrs=global_attrs)
 
     if meta["time"] is not None:
         ds = ds.expand_dims({"time": [meta["time"]]})

@@ -21,6 +21,7 @@ from ._reader import (
     _read_archv_meta,
     detect_filetype,
     read_archv,
+    read_ave,
     read_bathy,
     read_grid,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "open_dataset",
     "open_mfdataset",
     "postprocess",
+    "read_ave",
     "regrid",
     "regrid_horizontal",
     "regrid_to_hycom",
@@ -217,6 +219,11 @@ def open_dataset(
         )
         if postprocess:
             ds = _drop_auto(_postprocess_ds(ds), auto)
+        return ds
+    elif filetype == "ave":
+        ds = read_ave(
+            basename, grid_ds=grid_ds, endian=endian, chunks=chunks, variables=variables
+        )
         return ds
     elif filetype == "bathy":
         if grid_ds is None:
