@@ -1,0 +1,55 @@
+name: Draft Release Notes
+
+on:
+  pull_request:
+    types: [opened, labeled, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  draft-release-note:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate release note draft
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const labels = pr.labels.map(l => l.name);
+            
+            // Categorize
+            let category = 'Other';
+            let icon = '';
+            if (labels.includes('breaking')) {
+              category = 'Breaking Changes';
+              icon = '🚨';
+            } else if (labels.includes('feature')) {
+              category = 'New Features';
+              icon = '✨';
+            } else if (labels.includes('docs')) {
+              category = 'Documentation';
+              icon = '📚';
+            } else if (labels.includes('bug')) {
+              category = 'Bug Fixes';
+              icon = '🐛';
+            } else if (labels.includes('internal')) {
+              category = 'Internal';
+              icon = '🔧';
+            }
+            
+            // Format with date
+            const date = new Date().toISOString().split('T')[0];
+            const releaseEntry = `- **${pr.title}** ([#${pr.number}](${pr.html_url})) — _${date}_`;
+            
+            // Post as PR comment for review/editing before merge
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 📝 Release Notes Draft\n\n**Category:** ${icon} ${category}\n\n${releaseEntry}\n\n_This will be added to \`docs/releases.md\` under the \`[Unreleased]\` section when merged._`
+            });
