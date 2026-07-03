@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Add to releases.md
         uses: actions/github-script@v7
         with:
@@ -22,29 +22,29 @@ jobs:
             const fs = require('fs');
             const pr = context.payload.pull_request;
             const labels = pr.labels.map(l => l.name);
-            
+
             let categoryHeader = '### 🔧 Internal';
             if (labels.includes('breaking')) categoryHeader = '### 🚨 Breaking Changes';
             else if (labels.includes('feature')) categoryHeader = '### ✨ New Features';
             else if (labels.includes('docs')) categoryHeader = '### 📚 Documentation';
             else if (labels.includes('bug')) categoryHeader = '### 🐛 Bug Fixes';
-            
+
             const date = new Date().toISOString().split('T')[0];
             const entry = `- **${pr.title}** ([#${pr.number}](${pr.html_url})) — _${date}_`;
-            
+
             // Read releases.md
             let content = fs.readFileSync('docs/releases.md', 'utf8');
-            
+
             // Ensure [Unreleased] section exists
             if (!content.includes('## [Unreleased]')) {
               content = '## [Unreleased]\n\n' + content;
             }
-            
+
             // Find or create category under [Unreleased]
             const lines = content.split('\n');
             let unreleasedIdx = -1;
             let categoryIdx = -1;
-            
+
             for (let i = 0; i < lines.length; i++) {
               if (lines[i] === '## [Unreleased]') {
                 unreleasedIdx = i;
@@ -58,7 +58,7 @@ jobs:
                 break;
               }
             }
-            
+
             // Insert category if not found
             if (categoryIdx === -1) {
               categoryIdx = unreleasedIdx + 1;
@@ -67,12 +67,12 @@ jobs:
               }
               lines.splice(categoryIdx, 0, categoryHeader, '');
             }
-            
+
             // Insert entry after category header
             lines.splice(categoryIdx + 1, 0, entry);
-            
+
             fs.writeFileSync('docs/releases.md', lines.join('\n'));
-      
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
