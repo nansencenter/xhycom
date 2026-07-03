@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import xhycom
-from xhycom._reader import detect_filetype
+from xhycom._reader import detect_filetype, read_ave
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +126,62 @@ def test_archive_type_instantaneous(archive_file):
     # The synthetic fixture writes a "... model day" header -> instantaneous archv.
     ds = xhycom.open_dataset(archive_file)
     assert ds.attrs["archive_type"] == "instantaneous"
+
+
+# ---------------------------------------------------------------------------
+# AVE (hycave/ensave monthly average)
+# ---------------------------------------------------------------------------
+def test_detect_filetype_ave(ave_file: str) -> None:
+    """AVE header (has 'iversn' + 'kdm   ') is distinguished from archv."""
+    assert detect_filetype(ave_file) == "ave"
+
+
+def test_open_ave_structure(ave_file: str, grid_file: tuple) -> None:
+    """2-D and 3-D AVE fields land on the expected dims; archive_type is set."""
+    grid = xhycom.open_dataset(grid_file[0])
+    ds = xhycom.open_dataset(ave_file, grid=grid)
+    assert "ssh" in ds
+    assert "temp" in ds
+    assert ds["ssh"].dims == ("time", "y", "x")
+    assert set(ds["temp"].dims) == {"time", "k", "y", "x"}
+    np.testing.assert_array_equal(ds["k"].values, [1, 2, 3])
+    assert ds["time"].size == 1
+    assert ds.attrs["archive_type"] == "time_average"
+
+
+def test_open_ave_time_from_filename(ave_file: str) -> None:
+    """Time coordinate is parsed from _YYYY_MM suffix, not from model-day (always 0)."""
+    import cftime
+
+    ds = xhycom.open_dataset(ave_file)
+    t = ds["time"].values[0]
+    assert isinstance(t, cftime.datetime)
+    assert t.year == 1991
+    assert t.month == 1
+    assert t.day == 1
+
+
+def test_open_ave_variables_filter(ave_file: str) -> None:
+    """variables= kwarg restricts which AVE fields are loaded."""
+    ds = xhycom.open_dataset(ave_file, variables=["temp"])
+    assert "temp" in ds
+    assert "ssh" not in ds
+
+
+def test_open_ave_no_time_without_pattern(tmp_path, grid_file: tuple) -> None:
+    """Basenames without _YYYY_MM suffix produce a Dataset with no time dim."""
+    from conftest import _write_ave
+
+    base = str(tmp_path / "EXPAVE_nodate")
+    _write_ave(base)
+    ds = xhycom.open_dataset(base)
+    assert "time" not in ds.dims
+
+
+def test_read_ave_public_api(ave_file: str) -> None:
+    """read_ave() is importable from xhycom._reader and returns a Dataset."""
+    ds = read_ave(ave_file)
+    assert "ssh" in ds and "temp" in ds
 
 
 def test_archive_type_mean(tp0):
