@@ -275,7 +275,7 @@ def detect_filetype(basename: str) -> str:
         If the file type cannot be determined.
     """
     with open(basename + ".b") as f:
-        header = f.read(512)
+        header = f.read(1024)
 
     if re.search(r"'iversn'", header) and re.search(r"'kdm\s+'", header):
         return "ave"
