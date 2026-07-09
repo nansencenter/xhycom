@@ -13,6 +13,8 @@
 
 ### 📚 Documentation
 
+* Overhaul landing page ([#9](https://github.com/nansencenter/xhycom/pull/9))
+
 ### 🔧 Internal
 
 ---

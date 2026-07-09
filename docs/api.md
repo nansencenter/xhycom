@@ -21,7 +21,7 @@ on an existing Dataset.
 
 Map HYCOM output onto a regular lon/lat/depth grid (e.g. for comparison with
 GLORYS).  See the {doc}`regridding` notebook.  The vertical step needs only
-``xgcm`` (pip); the lateral step also needs ``xesmf`` (conda — see
+``xgcm`` (pip); the lateral step also needs ``xesmf`` (conda, see
 ``ci/environment-regrid.yml``).
 
 ```{eval-rst}
