@@ -1,11 +1,26 @@
 # Installation
 
-## Horizontal regridding needs xESMF (conda)
+## 🐍 conda (recommended)
 
-**Horizontal** regridding (`regrid_horizontal` and the full `regrid` wrapper) needs
-[xESMF](https://xesmf.readthedocs.io), whose ESMF/esmpy backend has no PyPI wheels
-and must come from conda-forge. `ci/environment-regrid.yml` creates the environment
-and installs xhycom into it in one step:
+```bash
+conda install -c conda-forge xhycom
+```
+
+This installs xhycom together with [xESMF](https://xesmf.readthedocs.io), which is required for horizontal regridding and has no PyPI wheels. All features are available.
+
+## 📦 pip
+
+xESMF must come from conda-forge, so first create a conda environment that has it, then pip install xhycom into it:
+
+```bash
+conda create -n hycom-env -c conda-forge xesmf
+conda activate hycom-env
+pip install xhycom
+```
+
+## 🔧 From GitHub (latest unreleased)
+
+To get the latest development version before it appears in an official release, clone the repo and create the conda environment from the bundled recipe. This sets up xESMF and installs xhycom in editable mode from the clone in one step:
 
 ```bash
 git clone https://github.com/nansencenter/xhycom.git
@@ -14,21 +29,9 @@ conda env create -f ci/environment-regrid.yml
 conda activate hycom-analysis-env
 ```
 
-## From GitHub
+## 🖥️ On Olivia / Betzy (NRIS)
 
-If you don't need horizontal regridding:
-
-```bash
-pip install git+https://github.com/nansencenter/xhycom.git
-```
-
-This includes lazy / Dask-backed loading and vertical regridding (`regrid_vertical`
-and depth interpolation), both `dask` and `xgcm` are core, pip-installable
-dependencies.
-
-## On Olivia / Betzy (NRIS)
-
-We can use a dedicated conda environment for HYCOM analysis with `xhycom`. The repo
+The instructions below follow the **From GitHub** route (editable install from a clone). We can use a dedicated conda environment for HYCOM analysis with `xhycom`. The repo
 ships the recipe in `ci/environment-regrid.yml` (xESMF/ESMF, xgcm, Dask, JupyterLab,
 and xhycom), named `hycom-analysis-env`. **Olivia and Betzy build and activate this
 environment differently**: Betzy uses conda directly; Olivia uses
@@ -133,7 +136,7 @@ export XHYCOM_CACHE_DIR="/cluster/projects/nn2993k/${USER}/.xhycom-cache-dir"
 For an editable / development install and how to run the test suite, see the
 [Contributor Guide](contributing.md#editable--development-install).
 
-## Cache directory for regrid weights
+## 💾 Cache directory for regrid weights
 
 Horizontal regridding builds an xESMF weight matrix that maps the source grid onto
 the target grid. Generating it is the slow part of a regrid, and it depends only on
@@ -157,7 +160,7 @@ Always add that export to your `~/.bashrc`, even if you also put it in the Open
 OnDemand *Environment setup* field (see
 [On Olivia / Betzy (NRIS)](#on-olivia-betzy-nris)) or a batch job script.
 
-## Dependencies
+## 📋 Dependencies
 
 ### Required
 
