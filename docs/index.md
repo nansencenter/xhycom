@@ -188,4 +188,5 @@ big-computations.ipynb
 why-xarray
 api
 contributing
+releases
 ```
