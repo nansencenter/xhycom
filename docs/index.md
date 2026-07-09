@@ -10,7 +10,7 @@
 
 ### Reading HYCOM output
 
-xhycom reads HYCOM `.a/.b` output directly into a labelled `Dataset` (names, coordinates, units, a decoded time axis, and lazy out-of-memory access) with no intermediate files:
+xhycom reads HYCOM `.a/.b` output directly into a labelled xarray `Dataset` (names, coordinates, units, a decoded time axis, and lazy out-of-memory access) with no intermediate files:
 
 ```python
 import xhycom
