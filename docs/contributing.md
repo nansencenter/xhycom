@@ -16,7 +16,7 @@ pytest
 ```
 
 The `dev` extra (`pytest`, `pytest-cov`, `netCDF4`) plus the core dependencies is
-enough to run the reader, postprocessing, and vertical-regridding tests — they're
+enough to run the reader, postprocessing, and vertical-regridding tests, they're
 self-contained, with real-data fixtures bundled under `tests/data/`.
 
 The lateral (horizontal) regridding tests additionally need `xesmf`, so they
@@ -34,7 +34,7 @@ pytest
 
 The project uses [pre-commit](https://pre-commit.com) to run linting/formatting
 (ruff) and basic file checks before each commit. It's already installed if you
-followed either of the setups above — it's in the `dev` extra
+followed either of the setups above, it's in the `dev` extra
 (`pip install -e ".[dev]"`) and in `ci/environment-regrid.yml`. Otherwise,
 install it directly:
 
@@ -48,7 +48,7 @@ Then install the git hook so the checks run automatically on `git commit`:
 pre-commit install
 ```
 
-Without this step, the hooks won't run locally — they'll only run in CI, where
+Without this step, the hooks won't run locally, they'll only run in CI, where
 they're required to pass before a PR can merge.
 
 To run all hooks manually against the full codebase (e.g. before opening a PR):
@@ -100,7 +100,7 @@ make help    # list all available targets
 
 To see how your changes to the documentation render, you have two options:
 
-1. Build the documentation locally — see [Build](#build) above for instructions.
+1. Build the documentation locally, see [Build](#build) above for instructions.
 2. After pushing your changes to the PR, once the Read the Docs build has finished,
    click the yellow link in the PR's checks list (as shown below) to preview the
    rendered docs for this PR:
