@@ -19,4 +19,5 @@ time-averaging.ipynb
 big-computations.ipynb
 api
 contributing
+releases
 ```
