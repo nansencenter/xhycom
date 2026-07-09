@@ -1,12 +1,12 @@
 # Why xhycom?
 
-xhycom reads HYCOM `.ab` output directly into a labelled [xarray](why-xarray.ipynb) `Dataset` — names, coordinates, units, a decoded time axis, and lazy out-of-memory access — with no intermediate files.
+xhycom reads HYCOM `.ab` output directly into a labelled [xarray](why-xarray.ipynb) `Dataset`, names, coordinates, units, a decoded time axis, and lazy out-of-memory access, with no intermediate files.
 
 ## Reading HYCOM output
 
 There are three common workflows.
 
-**1. [`abfile`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/pythonlibs/abfile) + NumPy** — the standard low-level reader; returns one masked array per field:
+**1. [`abfile`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/pythonlibs/abfile) + NumPy**: the standard low-level reader; returns one masked array per field:
 
 ```python
 import abfile.abfile as abf
@@ -15,13 +15,13 @@ ab = abf.ABFileArchv("archv.2020_001_00", "r")
 temp_sfc = ab.read_field("temp", 1)        # (jdm, idm) masked array, layer 1
 ```
 
-**2. `m2nc` → xarray** — a Fortran tool ([`hycom/MSCPROGS/src/ExtractNC2D`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/ExtractNC2D)) that converts `.ab` to NetCDF, which you then open with xarray:
+**2. `m2nc` → xarray**: a Fortran tool ([`hycom/MSCPROGS/src/ExtractNC2D`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/ExtractNC2D)) that converts `.ab` to NetCDF, which you then open with xarray:
 
 ```bash
 m2nc archv.2020_001_00.a ...               # writes tmp1.nc
 ```
 
-**3. xhycom** — straight to a labelled, lazy `Dataset`:
+**3. xhycom**: straight to a labelled, lazy `Dataset`:
 
 ```python
 import xhycom
@@ -36,8 +36,8 @@ ds["temp"].isel(time=0, k=0).plot()        # lon/lat/time already attached
 | `lon` / `lat`         | carried separately           | in file                      | attached automatically          |
 | Time axis             | not decoded                  | one record per file          | calendar-aware datetime         |
 | Layer / density       | manual                       | in file                      | `k` / `dens` coordinates        |
-| Lazy / out-of-memory  | no — eager into RAM          | no — must convert first      | yes — Dask via `chunks=`        |
-| Extra step            | —                            | compile Fortran, convert     | none                            |
+| Lazy / out-of-memory  | no, eager into RAM          | no, must convert first      | yes, Dask via `chunks=`        |
+| Extra step            |,                            | compile Fortran, convert     | none                            |
 | Best when             | low-level field access       | NetCDF needed (NCO/CDO/…)    | interactive / larger-than-RAM   |
 
 ### Out-of-memory analysis with `chunks`
@@ -55,9 +55,9 @@ ds["temp"].isel(k=0).mean("time").compute().plot(x="lon", y="lat")
 
 ### Conservative regridding to a regular grid
 
-HYCOM's curvilinear, hybrid-coordinate output usually has to be mapped onto a regular lon/lat/depth grid before it can be compared with reanalyses such as [GLORYS](https://doi.org/10.48670/moi-00021). The established tool is **[`hyc2proj`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Hyc2proj)** (Fortran, `hycom/MSCPROGS/src/Hyc2proj`): you edit `proj.in`, `depthlevels.in` and `extract.archv`, run the compiled binary, and get a NetCDF file. Its horizontal step is bilinear and its vertical step is spline / linear / staircase — none of them conservative.
+HYCOM's curvilinear, hybrid-coordinate output usually has to be mapped onto a regular lon/lat/depth grid before it can be compared with reanalyses such as [GLORYS](https://doi.org/10.48670/moi-00021). The established tool is **[`hyc2proj`](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Hyc2proj)** (Fortran, `hycom/MSCPROGS/src/Hyc2proj`): you edit `proj.in`, `depthlevels.in` and `extract.archv`, run the compiled binary, and get a NetCDF file. Its horizontal step is bilinear and its vertical step is spline / linear / staircase, none of them conservative.
 
-`xhycom.regrid` does it in one in-process call and **conservatively by default** — area-conservative horizontally, depth-integral-conserving (thickness-weighted) vertically — onto any regular grid, including a GLORYS grid opened straight from its NetCDF file:
+`xhycom.regrid` does it in one in-process call and **conservatively by default**: area-conservative horizontally, depth-integral-conserving (thickness-weighted) vertically, onto any regular grid, including a GLORYS grid opened straight from its NetCDF file:
 
 ```python
 glorys = xr.open_dataset("GLO-MFC_001_030_mask_bathy.nc")   # regular lon/lat/depth + mask
@@ -74,7 +74,7 @@ ds_glorys = xhycom.regrid(ds, target=glorys, grid="regional.grid")
 | Output         | static NetCDF file                             | lazy / Dask Dataset (write NetCDF if you want)             |
 | Velocities     | rotated to east/north                          | de-staggered to T-points **and** rotated to east/north     |
 
-Regridding many time steps of large output is still expensive — as with the Fortran tools, xhycom doesn't change that, and a batch job (e.g. a Slurm script) is often the right way to run it. For a handful of time steps or a short time horizon, it works fine interactively.
+Regridding many time steps of large output is still expensive, as with the Fortran tools, xhycom doesn't change that, and a batch job (e.g. a Slurm script) is often the right way to run it. For a handful of time steps or a short time horizon, it works fine interactively.
 
 See the [regridding tutorial](regridding.ipynb) for worked examples.
 
