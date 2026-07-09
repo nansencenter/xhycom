@@ -18,4 +18,7 @@
 
 ### 🔧 Internal
 
+* Prepare for PyPI and Conda releases ([#12](https://github.com/nansencenter/xhycom/pull/12))
+
+
 ---
