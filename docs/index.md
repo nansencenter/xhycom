@@ -18,4 +18,5 @@ regridding.ipynb
 time-averaging.ipynb
 api
 contributing
+releases
 ```
