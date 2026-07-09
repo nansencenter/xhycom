@@ -172,6 +172,15 @@ Full documentation of all public functions and classes.
 How to report issues and contribute to xhycom.
 :::
 
+:::{grid-item-card} Changelog
+:link: releases
+:link-type: doc
+
+{octicon}`tag;2em;sd-text-primary`
+
+Release history and what changed in each version.
+:::
+
 ::::
 
 ```{toctree}
