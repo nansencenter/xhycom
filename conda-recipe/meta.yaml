@@ -6,7 +6,7 @@ package:
 
 source:
   url: https://pypi.org/packages/source/x/xhycom/xhycom-{{ version }}.tar.gz
-  sha256: <paste sha256 from the PyPI release page after publishing>
+  sha256: c5fdb9a9b547c4df89cacd47a8a0c155395db07b013c06e99ba759f0c35ee03a
 
 build:
   number: 0
@@ -26,6 +26,7 @@ requirements:
     - dask
     - xgcm
     - numba
+    - xesmf
 
 test:
   imports:
