@@ -14,6 +14,7 @@ dependencies = [
     "numpy",
     "xarray",
     "cftime",
+    "nc-time-axis",  # matplotlib cftime axis support for plotting HYCOM time coords
     "dask",
     "xgcm",
     "numba",   # required by xgcm's Grid.transform for method="conservative"
