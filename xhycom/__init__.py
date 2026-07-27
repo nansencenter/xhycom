@@ -32,6 +32,14 @@ from ._regrid import (
     regrid_vertical,
     velocities_east_north,
 )
+from ._section import section_plot
+from ._transect import ResolvedTransect, Transect
+from ._transport import (
+    section_data,
+    section_flux_density,
+    transport,
+    transport_tpoint,
+)
 
 # Private alias so the public `postprocess` name can also be a keyword argument
 # on open_dataset / open_mfdataset without shadowing the function.
@@ -48,6 +56,14 @@ __all__ = [
     "regrid_to_hycom",
     "regrid_vertical",
     "velocities_east_north",
+    # Transect / transport
+    "Transect",
+    "ResolvedTransect",
+    "transport",
+    "section_data",
+    "section_flux_density",
+    "transport_tpoint",
+    "section_plot",
 ]
 
 # A grid argument is either a path to ``regional.grid`` or a pre-loaded Dataset.
