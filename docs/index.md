@@ -120,6 +120,15 @@ Slice, select, and visualize HYCOM fields with xarray.
 Remap onto a regular lon/lat/depth grid for reanalysis comparisons.
 :::
 
+:::{grid-item-card} Transport
+:link: transport
+:link-type: doc
+
+{octicon}`milestone;2em;sd-text-primary`
+
+Compute volume, heat, salt, and freshwater transports through named sections.
+:::
+
 :::{grid-item-card} Time averaging
 :link: time-averaging
 :link-type: doc
@@ -193,6 +202,7 @@ lazy-loading.ipynb
 analysis.ipynb
 regridding.ipynb
 time-averaging.ipynb
+transport.ipynb
 big-computations.ipynb
 why-xarray
 api
