@@ -22,24 +22,37 @@ or negate the result.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 import xarray as xr
 from numpy.typing import ArrayLike
 
+if TYPE_CHECKING:
+    import matplotlib.axes
+
 _R_EARTH_KM: float = 6371.0
 
 # Approximate waypoints for common Arctic / sub-Arctic sections.
-# Positive transport is rightward when walking from first to last waypoint,
-# so adjust waypoint order if you want a specific sign convention.
+# Convention: positive transport is rightward when walking from first to last
+# waypoint.
+# note: the section definitions are verified for the TP2 and TP5 domains only
 _NAMED_SECTIONS: dict[str, tuple[list[float], list[float]]] = {
-    "fram_strait":      ([-20.0,  10.0], [79.0, 79.0]),
-    "bering_strait":    ([-170.0, -166.0], [65.5, 65.5]),
-    "barents_opening":  ([20.0,   19.0],  [71.5, 74.5]),
-    "svinoy":           ([-5.0,    5.0],  [62.0, 62.0]),
-    "gimsoy":           ([13.0,   17.0],  [68.0, 68.0]),
-    "fsc":              ([-7.0,   -1.0],  [62.0, 60.0]),
+    "fram_strait":       ([ 15.0,  -20.0],   [79.0,  79.0]),
+    "denmark_strait":    ([-22.68, -37.0],   [66.0,  66.1]),
+    "bering_strait":     ([-166.0, -171.0],  [66.0,  66.0]),
+    "lancaster_sound":   ([-82.0,  -82.0],   [73.4,  74.9]),
+    "jones_strait":      ([-80.5,  -80.1],   [75.2,  76.6]),
+    "robeson_channel":   ([-71.0,  -77.0],   [78.0,  78.1]),
+    "hudson_strait":     ([-64.7,  -65.0],   [60.0,  63.0]),
+    "kola_section":      ([ 33.5,   33.5],   [69.0,  74.0]),
+    "kara_gate":         ([ 58.8,   57.4],   [70.4,  70.6]),
+    "barents_opening":   ([ 26.5,   15.5],   [69.5,  77.9]),
+    "svinoy":            ([  5.5,   -7.0],   [62.0,  62.3]),
+    "gimsoy":            ([ 5.0,   16.2],   [70.5,  68.7]),
+    "fsc":               ([ -1.4,   -7.0],   [60.2,  62.3]),
+    "topaz_southern":    ([  6.26, -94.75],  [43.65, 39.06]),
+    "topaz_northern":    ([186.47, 160.0],  [51.63, 56.20]),
 }
 
 # Face-type sentinel values stored in ResolvedTransect.face_type
@@ -188,6 +201,8 @@ class ResolvedTransect:
         The originating :class:`Transect`.
     j, i:
         T-cell indices along the section, shape (N,).
+    cell_lon, cell_lat:
+        Geographic coordinates of each T-cell, shape (N,).
     distance_km:
         Cumulative great-circle distance from the first T-cell, shape (N,).
     cell_width_km:
@@ -216,6 +231,8 @@ class ResolvedTransect:
     transect: "Transect"
     j: np.ndarray
     i: np.ndarray
+    cell_lon: np.ndarray
+    cell_lat: np.ndarray
     distance_km: np.ndarray
     cell_width_km: np.ndarray
     bearing_deg: np.ndarray
@@ -245,6 +262,272 @@ class ResolvedTransect:
     def has_face_data(self) -> bool:
         """True when HYCOM C-grid face data is available for exact transport."""
         return self.face_type is not None
+
+    def plot(
+        self,
+        ax: "matplotlib.axes.Axes | None" = None,
+        *,
+        grid: "xr.Dataset | str | None" = None,
+        bathy: "xr.Dataset | str | None" = None,
+        figsize: "tuple[float, float] | None" = None,
+        bathy_levels: "int | list[float]" = 6,
+        pad_deg: float = 2.0,
+        i_range: "tuple[int, int] | None" = None,
+        j_range: "tuple[int, int] | None" = None,
+        color: str = "steelblue",
+        show_cells: bool = False,
+        waypoint_kw: dict | None = None,
+        label_endpoints: bool = True,
+        **kwargs,
+    ) -> None:
+        """Plot the resolved T-cell path in longitude–latitude space.
+
+        Parameters
+        ----------
+        ax:
+            Existing axes to draw into.  A new figure is created when ``None``.
+            Pass a ``cartopy.crs.PlateCarree()`` axes for a map background.
+        grid:
+            HYCOM grid Dataset or path to ``regional.grid``.  When provided
+            the T-point positions are drawn as a faint scatter clipped to the
+            section bounding box, and U/V faces are shown colour-coded by sign.
+        bathy:
+            Bathymetry Dataset or path (``depth_*`` file, opened with
+            ``grid=`` so it carries the coordinates).  When provided a
+            ``pcolormesh`` of ocean depth is drawn as the background, with
+            land (NaN) shaded in a distinct colour.  Requires *grid*.
+        pad_deg:
+            Degrees of padding around the section bounding box.  Default 2°.
+        color:
+            Colour for the T-cell path line and markers.
+        show_cells:
+            Draw a faint scatter of T-cell centres in the section bounding box
+            as a grid reference.  Default ``True``.  Pass ``False`` to hide.
+        waypoint_kw:
+            Extra keyword arguments for the waypoint scatter call.
+        label_endpoints:
+            Annotate the first and last waypoints with their coordinates.
+        **kwargs:
+            Forwarded to :func:`matplotlib.pyplot.plot` for the T-cell path.
+
+        Examples
+        --------
+        >>> resolved.plot()
+        >>> resolved.plot(grid=grid)
+        >>> resolved.plot(grid=grid, bathy=bathy)
+
+        With a cartopy map background::
+
+            import cartopy.crs as ccrs
+            ax = plt.axes(projection=ccrs.NorthPolarStereo())
+            ax.coastlines()
+            resolved.plot(ax=ax, grid=grid, bathy=bathy)
+        """
+        import matplotlib.pyplot as plt
+
+        if bathy is not None and grid is None:
+            raise ValueError("grid= is required alongside bathy=.")
+
+        native = bathy is not None   # plot in (i, j) index space when bathy shown
+
+        if ax is None:
+            _, ax = plt.subplots(figsize=figsize or (9, 5))
+            if native:
+                ax.set_xlabel("i (column index)")
+                ax.set_ylabel("j (row index)")
+            else:
+                ax.set_xlabel("Longitude (°E)")
+                ax.set_ylabel("Latitude (°N)")
+
+        kwargs.setdefault("lw", 1.5)
+
+        # --- Load grid coordinates once (needed for lon/lat mode and face markers) ---
+        plon = plat = None
+        ulon_g = ulat_g = vlon_g = vlat_g = None
+        if grid is not None:
+            grid = _load_grid(grid)
+            plon = grid["plon"].values   # (jdm, idm)
+            plat = grid["plat"].values
+            ulon_g = grid["ulon"].values if "ulon" in grid else plon
+            ulat_g = grid["ulat"].values if "ulat" in grid else plat
+            vlon_g = grid["vlon"].values if "vlon" in grid else plon
+            vlat_g = grid["vlat"].values if "vlat" in grid else plat
+            qlon_g = grid["qlon"].values if "qlon" in grid else None
+            qlat_g = grid["qlat"].values if "qlat" in grid else None
+
+        # --- Bathymetry / land-mask background — plotted in native (i, j) space ---
+        if bathy is not None:
+            if isinstance(bathy, str):
+                bathy = _load_grid(bathy)
+            depth_vals = bathy["depth"].values.astype(float)  # NaN = land
+
+            # Gray land mask — ocean cells left transparent
+            land = np.where(np.isnan(depth_vals), 1.0, np.nan)
+            land_cmap = plt.cm.Greys.copy()
+            land_cmap.set_bad("none")
+            ax.pcolormesh(land, cmap=land_cmap, vmin=0, vmax=1,
+                          shading="nearest", zorder=0)
+
+            # Black depth contours (NaN land filled with 0 so contour doesn't choke)
+            depth_filled = np.where(np.isnan(depth_vals), 0.0, depth_vals)
+            ax.contour(depth_filled, colors="black", linewidths=0.4,
+                       levels=bathy_levels, zorder=1)
+
+
+        # --- HYCOM T-point scatter (full domain) ---
+        if show_cells and plon is not None:
+            if native:
+                jdm, idm = plon.shape
+                ii, jj = np.meshgrid(np.arange(idm), np.arange(jdm))
+                ax.scatter(ii.ravel(), jj.ravel(),
+                           s=2, color="0.6", linewidths=0, zorder=2,
+                           label="HYCOM T-points (cell centres)")
+            else:
+                ax.scatter(
+                    plon.ravel(), plat.ravel(),
+                    s=2, color="0.6", linewidths=0, zorder=1,
+                    label="HYCOM T-points (cell centres)",
+                )
+
+        # --- Face positions, staircase path, and corner markers ---
+        # U-face (j,i): between T(j,i-1) and T(j,i);  native position x=i-0.5, y=j
+        # V-face (j,i): between T(j-1,i) and T(j,i);  native position x=i,     y=j-0.5
+        # Q-point (j,i): NE corner of T(j,i);          native position x=i+0.5, y=j+0.5
+        # At each U↔V turn the two faces share a Q-point — the staircase goes through it,
+        # creating an L-bend.  Straight U→U or V→V runs have no shared corner.
+        fx_all = fy_all = None
+        corner_x = corner_y = np.empty(0)
+        mid_x = mid_y = np.empty(0)
+        turn = np.zeros(max(self.n_faces - 1, 0), dtype=bool)
+        all_cx = all_cy = np.zeros(len(turn))
+
+        if self.has_face_data:
+            is_u  = self.face_type == _FACE_U
+            fj_all = self.face_j
+            fi_all = self.face_i
+            if native:
+                fx_all = np.where(is_u, fi_all - 0.5, fi_all.astype(float))
+                fy_all = np.where(is_u, fj_all.astype(float), fj_all - 0.5)
+            elif grid is not None:
+                fx_all = np.where(is_u, ulon_g[fj_all, fi_all], vlon_g[fj_all, fi_all])
+                fy_all = np.where(is_u, ulat_g[fj_all, fi_all], vlat_g[fj_all, fi_all])
+
+            if fx_all is not None and self.n_faces > 1:
+                ft    = self.face_type
+                is_uv = (ft[:-1] == _FACE_U) & (ft[1:] == _FACE_V)
+                is_vu = (ft[:-1] == _FACE_V) & (ft[1:] == _FACE_U)
+                # U→V: shared Q = Q(fj[k+1]-1, fi[k]-1)
+                # V→U: shared Q = Q(fj[k]-1,   fi[k+1]-1)
+                cj_idx = np.where(is_uv, fj_all[1:] - 1, fj_all[:-1] - 1)
+                ci_idx = np.where(is_uv, fi_all[:-1] - 1, fi_all[1:] - 1)
+                jdm, idm = plon.shape
+                in_bounds = (cj_idx >= 0) & (ci_idx >= 0) & (cj_idx < jdm) & (ci_idx < idm)
+                turn = (is_uv | is_vu) & in_bounds
+                if native:
+                    all_cx = ci_idx + 0.5
+                    all_cy = cj_idx + 0.5
+                elif qlon_g is not None:
+                    sj = np.clip(cj_idx, 0, jdm - 1).astype(np.intp)
+                    si = np.clip(ci_idx, 0, idm - 1).astype(np.intp)
+                    all_cx = qlon_g[sj, si]
+                    all_cy = qlat_g[sj, si]
+                else:
+                    turn[:] = False
+                corner_x = all_cx[turn]
+                corner_y = all_cy[turn]
+
+                # Middle T-cells for straight runs (U→U or V→V): T-cell between faces.
+                # sign>0: dest=(fj,fi); sign<0,U: dest=(fj,fi-1); sign<0,V: dest=(fj-1,fi)
+                sgn = self.face_sign
+                dest_j = np.where(sgn > 0, fj_all,
+                                  np.where(is_u, fj_all,     fj_all - 1))
+                dest_i = np.where(sgn > 0, fi_all,
+                                  np.where(is_u, fi_all - 1, fi_all))
+                not_turn = ~turn
+                mid_tj = dest_j[:-1][not_turn].astype(np.intp)
+                mid_ti = dest_i[:-1][not_turn].astype(np.intp)
+                if native:
+                    mid_x: np.ndarray = mid_ti.astype(float)
+                    mid_y: np.ndarray = mid_tj.astype(float)
+                else:
+                    mid_x = plon[mid_tj, mid_ti]
+                    mid_y = plat[mid_tj, mid_ti]
+
+        # Build staircase: start T-cell → [face midpoint → corner? → face midpoint → …] → end T-cell
+        if native:
+            x0, y0 = float(self.i[0]),  float(self.j[0])
+            x1, y1 = float(self.i[-1]), float(self.j[-1])
+        else:
+            x0, y0 = float(self.cell_lon[0]),  float(self.cell_lat[0])
+            x1, y1 = float(self.cell_lon[-1]), float(self.cell_lat[-1])
+
+        if fx_all is not None:
+            pts_x: list[float] = [x0]
+            pts_y: list[float] = [y0]
+            for k in range(self.n_faces):
+                pts_x.append(float(fx_all[k]))
+                pts_y.append(float(fy_all[k]))
+                if k < self.n_faces - 1 and turn[k]:
+                    pts_x.append(float(all_cx[k]))
+                    pts_y.append(float(all_cy[k]))
+            pts_x.append(x1)
+            pts_y.append(y1)
+            px = np.array(pts_x)
+            py = np.array(pts_y)
+        else:
+            px = self.i.astype(float) if native else self.cell_lon
+            py = self.j.astype(float) if native else self.cell_lat
+
+        ax.plot(px, py, color=color, zorder=3, **kwargs)
+
+        if fx_all is not None:
+            ax.scatter(
+                np.concatenate([fx_all, corner_x, mid_x]),
+                np.concatenate([fy_all, corner_y, mid_y]),
+                s=12, marker="o", color=color, zorder=4, linewidths=0,
+            )
+
+        # --- Waypoints / endpoints ---
+        wp_kw = {"s": 60, "color": "tomato", "zorder": 5,
+                 "edgecolors": "white", "linewidths": 0.8}
+        if waypoint_kw:
+            wp_kw.update(waypoint_kw)
+        if native:
+            # In native space mark the first and last T-cell instead of waypoints
+            ax.scatter(self.i[[0, -1]], self.j[[0, -1]], **wp_kw)
+        else:
+            ax.scatter(self.transect.lons, self.transect.lats, **wp_kw)
+
+        if label_endpoints:
+            for ci, cj, lon, lat in [
+                (self.i[0],  self.j[0],  self.transect.lons[0],  self.transect.lats[0]),
+                (self.i[-1], self.j[-1], self.transect.lons[-1], self.transect.lats[-1]),
+            ]:
+                ax.annotate(
+                    f"({lon:.1f}, {lat:.1f})",
+                    xy=(ci if native else lon, cj if native else lat),
+                    xytext=(4, 4), textcoords="offset points",
+                    fontsize=8, color="tomato",
+                )
+
+        name = self.transect.name or "Section"
+        ax.set_title(
+            f"{name}  —  {self.n_cells} cells, {self.n_faces} faces, "
+            f"{self.distance_km[-1]:.0f} km"
+        )
+
+        # Clip view to requested index subset (native mode)
+        if native:
+            if i_range is not None:
+                ax.set_xlim(i_range)
+            if j_range is not None:
+                ax.set_ylim(j_range)
+
+        # Legend — only when there are labelled artists
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            ax.legend(handles, labels, fontsize=7, loc="best")
+
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +607,25 @@ class Transect:
     def available_names(cls) -> list[str]:
         """Return a sorted list of built-in section names."""
         return sorted(_NAMED_SECTIONS)
+
+    def reverse(self) -> "Transect":
+        """Return a copy of this transect with the waypoint order reversed.
+
+        Reversing the waypoints flips the sign convention: flow that was
+        positive (rightward) becomes negative, and vice versa.  Use this
+        to adopt a different positive direction without negating results
+        manually::
+
+            fs_north = fs.reverse()           # lons = [15, -20]: positive = northward
+            tr_north = xhycom.transport(ds, fs_north, grid=grid)
+            # tr_north.volume == -tr.volume
+
+        Returns
+        -------
+        Transect
+            New Transect with waypoints in reversed order and the same name.
+        """
+        return Transect(lons=self.lons[::-1], lats=self.lats[::-1], name=self.name)
 
     # ------------------------------------------------------------------
     # Resolution
@@ -482,6 +784,8 @@ class Transect:
             transect=self,
             j=j_cells,
             i=i_cells,
+            cell_lon=cell_lons,
+            cell_lat=cell_lats,
             distance_km=dist_km,
             cell_width_km=widths_km,
             bearing_deg=bearings,
