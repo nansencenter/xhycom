@@ -61,10 +61,10 @@ from ._transect import ResolvedTransect, Transect, _load_grid
 # Pa per metre of water column: rho0 * g = 1000 * 9.806 (HYCOM's ``onem``)
 _ONEM: float = 9806.0
 
-_RHO0: float = 1025.0   # reference density  kg m⁻³
-_CP:   float = 3996.0   # specific heat       J kg⁻¹ K⁻¹
-_SREF: float = 34.8     # freshwater reference salinity  PSU
-_TREF: float = 0.0      # heat-transport reference temperature  °C
+_RHO0: float = 1025.0  # reference density  kg m⁻³
+_CP: float = 3996.0  # specific heat       J kg⁻¹ K⁻¹
+_SREF: float = 34.8  # freshwater reference salinity  PSU
+_TREF: float = 0.0  # heat-transport reference temperature  °C
 
 # Operator strings accepted in *constraints*
 _OPS = frozenset({"lt", "le", "gt", "ge", "eq"})
@@ -85,7 +85,8 @@ def transport(
     t_ref: float = _TREF,
     rho0: float = _RHO0,
     cp: float = _CP,
-    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]] | None = None,
+    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
+    | None = None,
 ) -> xr.Dataset:
     """Compute section transports through a HYCOM C-grid transect.
 
@@ -187,9 +188,7 @@ def transport(
     if constraints:
         for cvar in constraints:
             if cvar not in ds:
-                raise ValueError(
-                    f"Constraint variable {cvar!r} not found in dataset."
-                )
+                raise ValueError(f"Constraint variable {cvar!r} not found in dataset.")
         for cvar, (op, _) in constraints.items():
             if op not in _OPS:
                 raise ValueError(
@@ -204,29 +203,99 @@ def transport(
 
     out_vars: dict[str, xr.DataArray] = {}
 
-    vol_u = _face_volume_flux(ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, constraints)
-    vol_v = _face_volume_flux(ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, constraints)
-
-    vol = vol_u + vol_v  # (time?,) in m³ s⁻¹
-    out_vars["volume"] = _attach_attrs(
-        vol * 1e-6, "volume transport", "Sv"
+    vol_u = _face_volume_flux(
+        ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, constraints
+    )
+    vol_v = _face_volume_flux(
+        ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, constraints
     )
 
+    vol = vol_u + vol_v  # (time?,) in m³ s⁻¹
+    out_vars["volume"] = _attach_attrs(vol * 1e-6, "volume transport", "Sv")
+
     if compute_heat:
-        heat_u = _face_tracer_flux(ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, t_var, t_ref, constraints)
-        heat_v = _face_tracer_flux(ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, t_var, t_ref, constraints)
+        heat_u = _face_tracer_flux(
+            ds,
+            resolved,
+            u_mask,
+            "uf",
+            u_var,
+            thknss_var,
+            k_dim,
+            t_var,
+            t_ref,
+            constraints,
+        )
+        heat_v = _face_tracer_flux(
+            ds,
+            resolved,
+            v_mask,
+            "vf",
+            v_var,
+            thknss_var,
+            k_dim,
+            t_var,
+            t_ref,
+            constraints,
+        )
         heat = (heat_u + heat_v) * rho0 * cp  # W
         out_vars["heat"] = _attach_attrs(heat * 1e-12, "heat transport", "TW")
 
     if compute_salt:
-        salt_u = _face_tracer_flux(ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, s_var, 0.0, constraints)
-        salt_v = _face_tracer_flux(ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, s_var, 0.0, constraints)
+        salt_u = _face_tracer_flux(
+            ds,
+            resolved,
+            u_mask,
+            "uf",
+            u_var,
+            thknss_var,
+            k_dim,
+            s_var,
+            0.0,
+            constraints,
+        )
+        salt_v = _face_tracer_flux(
+            ds,
+            resolved,
+            v_mask,
+            "vf",
+            v_var,
+            thknss_var,
+            k_dim,
+            s_var,
+            0.0,
+            constraints,
+        )
         # Salinity in PSU (g kg⁻¹): multiply by rho0 and convert PSU→kg/kg (÷1000)
         salt = (salt_u + salt_v) * rho0 / 1000.0  # kg s⁻¹
         out_vars["salt"] = _attach_attrs(salt, "salt transport", "kg s-1")
 
-        fw_u = _face_tracer_flux(ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, s_var, 0.0, constraints, fw_sref=s_ref)
-        fw_v = _face_tracer_flux(ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, s_var, 0.0, constraints, fw_sref=s_ref)
+        fw_u = _face_tracer_flux(
+            ds,
+            resolved,
+            u_mask,
+            "uf",
+            u_var,
+            thknss_var,
+            k_dim,
+            s_var,
+            0.0,
+            constraints,
+            fw_sref=s_ref,
+        )
+        fw_v = _face_tracer_flux(
+            ds,
+            resolved,
+            v_mask,
+            "vf",
+            v_var,
+            thknss_var,
+            k_dim,
+            s_var,
+            0.0,
+            constraints,
+            fw_sref=s_ref,
+        )
         fw = fw_u + fw_v  # m³ s⁻¹
         out_vars["fw"] = _attach_attrs(fw * 1e-6, "freshwater transport", "Sv")
 
@@ -242,7 +311,6 @@ _BTROP_PAIRS = (("u-vel.", "u_btrop"), ("v-vel.", "v_btrop"))
 
 def _check_velocity_complete(ds: xr.Dataset, u_var: str, v_var: str) -> None:
     """Raise if velocity looks baroclinic-only (postprocess not applied on archv)."""
-    import warnings as _warnings
     for vel_var, btrop_var in _BTROP_PAIRS:
         if vel_var not in (u_var, v_var):
             continue
@@ -271,9 +339,7 @@ def _ensure_resolved(
     if isinstance(transect, ResolvedTransect):
         return transect
     if grid is None:
-        raise ValueError(
-            "grid= is required when transect is an unresolved Transect."
-        )
+        raise ValueError("grid= is required when transect is an unresolved Transect.")
     return transect.resolve(_load_grid(grid))
 
 
@@ -289,16 +355,24 @@ def _face_arrays(
     resolved: ResolvedTransect,
     mask: np.ndarray,
     face_dim: str,
-) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray, xr.DataArray]:
+) -> tuple[
+    xr.DataArray,
+    xr.DataArray,
+    xr.DataArray,
+    xr.DataArray,
+    xr.DataArray,
+    xr.DataArray,
+    xr.DataArray,
+]:
     """Extract DataArrays for the subset of faces given by *mask*."""
-    fj  = xr.DataArray(resolved.face_j[mask],     dims=face_dim)
-    fi  = xr.DataArray(resolved.face_i[mask],     dims=face_dim)
-    sgn = xr.DataArray(resolved.face_sign[mask],  dims=face_dim)
-    w   = xr.DataArray(resolved.face_width_m[mask], dims=face_dim)
-    t1j = xr.DataArray(resolved.face_t1_j[mask],  dims=face_dim)
-    t1i = xr.DataArray(resolved.face_t1_i[mask],  dims=face_dim)
-    t2j = xr.DataArray(resolved.face_t2_j[mask],  dims=face_dim)
-    t2i = xr.DataArray(resolved.face_t2_i[mask],  dims=face_dim)
+    fj = xr.DataArray(resolved.face_j[mask], dims=face_dim)
+    fi = xr.DataArray(resolved.face_i[mask], dims=face_dim)
+    sgn = xr.DataArray(resolved.face_sign[mask], dims=face_dim)
+    w = xr.DataArray(resolved.face_width_m[mask], dims=face_dim)
+    t1j = xr.DataArray(resolved.face_t1_j[mask], dims=face_dim)
+    t1i = xr.DataArray(resolved.face_t1_i[mask], dims=face_dim)
+    t2j = xr.DataArray(resolved.face_t2_j[mask], dims=face_dim)
+    t2i = xr.DataArray(resolved.face_t2_i[mask], dims=face_dim)
     return fj, fi, sgn, w, t1j, t1i, t2j, t2i
 
 
@@ -318,16 +392,18 @@ def _face_volume_flux(
 
     fj, fi, sgn, w, t1j, t1i, t2j, t2i = _face_arrays(resolved, mask, face_dim)
 
-    vel  = ds[vel_var].isel(y=fj, x=fi)                          # (…, k, fd)
-    thk  = _thknss_m(ds, thknss_var)
-    thk1 = thk.isel(y=t1j, x=t1i)                                # (…, k, fd)
+    vel = ds[vel_var].isel(y=fj, x=fi)  # (…, k, fd)
+    thk = _thknss_m(ds, thknss_var)
+    thk1 = thk.isel(y=t1j, x=t1i)  # (…, k, fd)
     thk2 = thk.isel(y=t2j, x=t2i)
     thk_face = 0.5 * (thk1 + thk2)
 
-    flux = sgn * vel * thk_face * w                               # (…, k, fd)
+    flux = sgn * vel * thk_face * w  # (…, k, fd)
 
     if constraints:
-        flux = flux.where(_constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0)
+        flux = flux.where(
+            _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0
+        )
 
     return flux.sum(dim=[k_dim, face_dim])
 
@@ -355,8 +431,8 @@ def _face_tracer_flux(
 
     fj, fi, sgn, w, t1j, t1i, t2j, t2i = _face_arrays(resolved, mask, face_dim)
 
-    vel  = ds[vel_var].isel(y=fj, x=fi)
-    thk  = _thknss_m(ds, thknss_var)
+    vel = ds[vel_var].isel(y=fj, x=fi)
+    thk = _thknss_m(ds, thknss_var)
     thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
 
     tr1 = ds[tracer_var].isel(y=t1j, x=t1i)
@@ -371,7 +447,9 @@ def _face_tracer_flux(
     flux = sgn * vel * anom * thk_face * w
 
     if constraints:
-        flux = flux.where(_constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0)
+        flux = flux.where(
+            _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0
+        )
 
     return flux.sum(dim=[k_dim, face_dim])
 
@@ -392,9 +470,9 @@ def _constraint_mask(
         tr2 = ds[var].isel(y=t2j, x=t2i)
         val = 0.5 * (tr1 + tr2)
         cond: xr.DataArray = {
-            "lt": val <  threshold,
+            "lt": val < threshold,
             "le": val <= threshold,
-            "gt": val >  threshold,
+            "gt": val > threshold,
             "ge": val >= threshold,
             "eq": val == threshold,
         }[op]
@@ -412,6 +490,7 @@ def _attach_attrs(da: xr.DataArray, long_name: str, units: str) -> xr.DataArray:
 # ---------------------------------------------------------------------------
 # Section data extraction
 # ---------------------------------------------------------------------------
+
 
 def section_data(
     ds: xr.Dataset,
@@ -467,16 +546,14 @@ def section_data(
     j = xr.DataArray(resolved.j, dims="section")
     i = xr.DataArray(resolved.i, dims="section")
 
-    sel_vars = variables if variables is not None else [
-        v for v in ds.data_vars if "y" in ds[v].dims and "x" in ds[v].dims
-    ]
+    sel_vars = (
+        variables
+        if variables is not None
+        else [v for v in ds.data_vars if "y" in ds[v].dims and "x" in ds[v].dims]
+    )
 
-    out = xr.Dataset(
-        {v: ds[v].isel(y=j, x=i) for v in sel_vars if v in ds}
-    )
-    out = out.assign_coords(
-        distance_km=("section", resolved.distance_km)
-    )
+    out = xr.Dataset({v: ds[v].isel(y=j, x=i) for v in sel_vars if v in ds})
+    out = out.assign_coords(distance_km=("section", resolved.distance_km))
     out["distance_km"].attrs = {
         "long_name": "distance along section",
         "units": "km",
@@ -508,7 +585,8 @@ def section_flux_density(
     t_ref: float = _TREF,
     rho0: float = _RHO0,
     cp: float = _CP,
-    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]] | None = None,
+    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
+    | None = None,
 ) -> xr.Dataset:
     """Per-face, per-layer signed transport density along the section.
 
@@ -617,9 +695,9 @@ def section_flux_density(
         if not mask.any():
             continue
         fj, fi, sgn, w, t1j, t1i, t2j, t2i = _face_arrays(resolved, mask, "face")
-        vel = ds[vel_var].isel(y=fj, x=fi) * sgn           # (..., k, face)
+        vel = ds[vel_var].isel(y=fj, x=fi) * sgn  # (..., k, face)
         thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
-        fd = vel * thk_face                                  # m² s⁻¹
+        fd = vel * thk_face  # m² s⁻¹
         if constraints:
             cmask = _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, "face")
             fd = fd.where(cmask, 0.0)
@@ -632,12 +710,12 @@ def section_flux_density(
 
         if compute_heat:
             t_face = 0.5 * (ds[t_var].isel(y=t1j, x=t1i) + ds[t_var].isel(y=t2j, x=t2i))
-            heat_parts.append(fd * (t_face - t_ref) * rho0 * cp)   # W m⁻¹
+            heat_parts.append(fd * (t_face - t_ref) * rho0 * cp)  # W m⁻¹
 
         if compute_salt:
             s_face = 0.5 * (ds[s_var].isel(y=t1j, x=t1i) + ds[s_var].isel(y=t2j, x=t2i))
-            salt_parts.append(fd * s_face * rho0 / 1000.0)          # kg m⁻¹ s⁻¹
-            fw_parts.append(fd * (s_ref - s_face) / s_ref)          # m² s⁻¹
+            salt_parts.append(fd * s_face * rho0 / 1000.0)  # kg m⁻¹ s⁻¹
+            fw_parts.append(fd * (s_ref - s_face) / s_ref)  # m² s⁻¹
 
     flux_all = xr.concat(fd_parts, dim="face")
     depth_all = xr.concat(depth_parts, dim="face")
@@ -646,14 +724,16 @@ def section_flux_density(
 
     order = np.argsort(dist_all)
     idx = xr.DataArray(order, dims="face")
-    flux_all  = flux_all.isel(face=idx)
+    flux_all = flux_all.isel(face=idx)
     depth_all = depth_all.isel(face=idx)
-    dist_sorted  = dist_all[order]
+    dist_sorted = dist_all[order]
     width_sorted = width_all[order]
 
     out = xr.Dataset(
         {
-            "flux_density": _attach_attrs(flux_all, "volume transport density", "m2 s-1"),
+            "flux_density": _attach_attrs(
+                flux_all, "volume transport density", "m2 s-1"
+            ),
             "depth_m": _attach_attrs(depth_all, "depth of layer centre", "m"),
         }
     )
@@ -661,16 +741,19 @@ def section_flux_density(
     if compute_heat:
         out["heat_flux_density"] = _attach_attrs(
             xr.concat(heat_parts, dim="face").isel(face=idx),
-            "heat transport density", "W m-1",
+            "heat transport density",
+            "W m-1",
         )
     if compute_salt:
         out["salt_flux_density"] = _attach_attrs(
             xr.concat(salt_parts, dim="face").isel(face=idx),
-            "salt transport density", "kg m-1 s-1",
+            "salt transport density",
+            "kg m-1 s-1",
         )
         out["fw_flux_density"] = _attach_attrs(
             xr.concat(fw_parts, dim="face").isel(face=idx),
-            "freshwater transport density", "m2 s-1",
+            "freshwater transport density",
+            "m2 s-1",
         )
 
     out = out.assign_coords(
@@ -685,6 +768,7 @@ def section_flux_density(
 # ---------------------------------------------------------------------------
 # Regular-grid transport
 # ---------------------------------------------------------------------------
+
 
 def transport_tpoint(
     ds: xr.Dataset,
@@ -701,7 +785,8 @@ def transport_tpoint(
     t_ref: float = _TREF,
     rho0: float = _RHO0,
     cp: float = _CP,
-    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]] | None = None,
+    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
+    | None = None,
 ) -> xr.Dataset:
     """Compute section transports for a regular or rectilinear grid dataset.
 
@@ -803,9 +888,9 @@ def transport_tpoint(
     # Build KDTree from the dataset's lat/lon coordinates
     # ------------------------------------------------------------------
     from ._transect import (
-        _sample_polyline,
-        _cumulative_distance_km,
         _cell_widths_km,
+        _cumulative_distance_km,
+        _sample_polyline,
         _section_bearings,
         _to_xyz,
     )
@@ -847,9 +932,7 @@ def transport_tpoint(
 
     cell_lons = lon2d[j_cells, i_cells]
     cell_lats = lat2d[j_cells, i_cells]
-    widths_m = _cell_widths_km(
-        _cumulative_distance_km(cell_lons, cell_lats)
-    ) * 1e3
+    widths_m = _cell_widths_km(_cumulative_distance_km(cell_lons, cell_lats)) * 1e3
     bearings = _section_bearings(cell_lons, cell_lats)
 
     # Section-normal direction (rightward): n = (cos θ, -sin θ) in (E, N).
@@ -876,10 +959,10 @@ def transport_tpoint(
         dim_y, dim_x = ds[u_var].dims[-2], ds[u_var].dims[-1]
         sel = {dim_y: lat_idx, dim_x: lon_idx}
 
-    u = ds[u_var].isel(**sel)   # (..., z, section)
+    u = ds[u_var].isel(**sel)  # (..., z, section)
     v = ds[v_var].isel(**sel)
 
-    v_normal = u * cos_t - v * sin_t   # positive = rightward
+    v_normal = u * cos_t - v * sin_t  # positive = rightward
 
     # ------------------------------------------------------------------
     # Layer thicknesses from the depth coordinate
@@ -897,18 +980,24 @@ def transport_tpoint(
     def _integrate(da: xr.DataArray) -> xr.DataArray:
         return (da * dz * w).sum(dim=[z_dim, "section"])
 
-    def _tpoint_constraint_mask(t1j: xr.DataArray, t1i: xr.DataArray) -> xr.DataArray | None:
+    def _tpoint_constraint_mask(
+        t1j: xr.DataArray, t1i: xr.DataArray
+    ) -> xr.DataArray | None:
         if not constraints:
             return None
         mask: xr.DataArray | None = None
         for cvar, (op, threshold) in constraints.items():
-            val = ds[cvar].isel(**{
-                (lat_dim if lat_vals.ndim == 1 else ds[cvar].dims[-2]): t1j,
-                (lon_dim if lat_vals.ndim == 1 else ds[cvar].dims[-1]): t1i,
-            })
+            val = ds[cvar].isel(
+                **{
+                    (lat_dim if lat_vals.ndim == 1 else ds[cvar].dims[-2]): t1j,
+                    (lon_dim if lat_vals.ndim == 1 else ds[cvar].dims[-1]): t1i,
+                }
+            )
             cond: xr.DataArray = {
-                "lt": val < threshold, "le": val <= threshold,
-                "gt": val > threshold, "ge": val >= threshold,
+                "lt": val < threshold,
+                "le": val <= threshold,
+                "gt": val > threshold,
+                "ge": val >= threshold,
                 "eq": val == threshold,
             }[op]
             mask = cond if mask is None else (mask & cond)

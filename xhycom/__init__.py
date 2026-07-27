@@ -47,6 +47,8 @@ _postprocess_ds = postprocess
 
 __version__ = "0.1.0"
 __all__ = [
+    "ResolvedTransect",
+    "Transect",
     "open_dataset",
     "open_mfdataset",
     "postprocess",
@@ -55,15 +57,12 @@ __all__ = [
     "regrid_horizontal",
     "regrid_to_hycom",
     "regrid_vertical",
-    "velocities_east_north",
-    # Transect / transport
-    "Transect",
-    "ResolvedTransect",
-    "transport",
     "section_data",
     "section_flux_density",
-    "transport_tpoint",
     "section_plot",
+    "transport",
+    "transport_tpoint",
+    "velocities_east_north",
 ]
 
 # A grid argument is either a path to ``regional.grid`` or a pre-loaded Dataset.

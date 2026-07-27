@@ -20,7 +20,7 @@ def section_plot(
     section_ds: xr.Dataset,
     var: str,
     *,
-    ax: "matplotlib.axes.Axes | None" = None,
+    ax: matplotlib.axes.Axes | None = None,
     depth_var: str = "depth_m",
     distance_coord: str = "distance_km",
     itime: int | None = None,
@@ -32,7 +32,7 @@ def section_plot(
     title: str | None = None,
     flip_x: bool = False,
     **kwargs,
-) -> "matplotlib.axes.Axes":
+) -> matplotlib.axes.Axes:
     """Filled-colour cross-section plot (distance × depth).
 
     Works with the output of :func:`~xhycom.section_data` (hydrographic
@@ -112,7 +112,7 @@ def section_plot(
         depth_da = section_ds[depth_var] if depth_var in section_ds else None
 
     # da now has dims (k, section) or (k, face)
-    values = da.values.astype(float)   # (k, n)
+    values = da.values.astype(float)  # (k, n)
 
     # ------------------------------------------------------------------
     # Distance axis
@@ -153,7 +153,11 @@ def section_plot(
         if cmap is None:
             cmap = "RdBu_r"
         if "vmin" not in kwargs and "vmax" not in kwargs:
-            vmax = float(np.nanpercentile(np.abs(values[np.isfinite(values)]), 98)) if np.any(np.isfinite(values)) else 1.0
+            vmax = (
+                float(np.nanpercentile(np.abs(values[np.isfinite(values)]), 98))
+                if np.any(np.isfinite(values))
+                else 1.0
+            )
             kwargs.setdefault("vmin", -vmax)
             kwargs.setdefault("vmax", vmax)
     else:
@@ -167,8 +171,12 @@ def section_plot(
         _, ax = plt.subplots(figsize=(12, 5))
 
     pc = ax.pcolormesh(
-        dist, depth_1d, np.ma.masked_invalid(values),
-        cmap=cmap, shading="nearest", **kwargs,
+        dist,
+        depth_1d,
+        np.ma.masked_invalid(values),
+        cmap=cmap,
+        shading="nearest",
+        **kwargs,
     )
 
     ax.set_xlabel("Distance along section (km)")

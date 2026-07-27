@@ -38,21 +38,21 @@ _R_EARTH_KM: float = 6371.0
 # waypoint.
 # note: the section definitions are verified for the TP2 and TP5 domains only
 _NAMED_SECTIONS: dict[str, tuple[list[float], list[float]]] = {
-    "fram_strait":       ([ 15.0,  -20.0],   [79.0,  79.0]),
-    "denmark_strait":    ([-22.68, -37.0],   [66.0,  66.1]),
-    "bering_strait":     ([-166.0, -171.0],  [66.0,  66.0]),
-    "lancaster_sound":   ([-82.0,  -82.0],   [73.4,  74.9]),
-    "jones_strait":      ([-80.5,  -80.1],   [75.2,  76.6]),
-    "robeson_channel":   ([-71.0,  -77.0],   [78.0,  78.1]),
-    "hudson_strait":     ([-64.7,  -65.0],   [60.0,  63.0]),
-    "kola_section":      ([ 33.5,   33.5],   [69.0,  74.0]),
-    "kara_gate":         ([ 58.8,   57.4],   [70.4,  70.6]),
-    "barents_opening":   ([ 26.5,   15.5],   [69.5,  77.9]),
-    "svinoy":            ([  5.5,   -7.0],   [62.0,  62.3]),
-    "gimsoy":            ([ 5.0,   16.2],   [70.5,  68.7]),
-    "fsc":               ([ -1.4,   -7.0],   [60.2,  62.3]),
-    "topaz_southern":    ([  6.26, -94.75],  [43.65, 39.06]),
-    "topaz_northern":    ([186.47, 160.0],  [51.63, 56.20]),
+    "fram_strait": ([15.0, -20.0], [79.0, 79.0]),
+    "denmark_strait": ([-22.68, -37.0], [66.0, 66.1]),
+    "bering_strait": ([-166.0, -171.0], [66.0, 66.0]),
+    "lancaster_sound": ([-82.0, -82.0], [73.4, 74.9]),
+    "jones_strait": ([-80.5, -80.1], [75.2, 76.6]),
+    "robeson_channel": ([-71.0, -77.0], [78.0, 78.1]),
+    "hudson_strait": ([-64.7, -65.0], [60.0, 63.0]),
+    "kola_section": ([33.5, 33.5], [69.0, 74.0]),
+    "kara_gate": ([58.8, 57.4], [70.4, 70.6]),
+    "barents_opening": ([26.5, 15.5], [69.5, 77.9]),
+    "svinoy": ([5.5, -7.0], [62.0, 62.3]),
+    "gimsoy": ([5.0, 16.2], [70.5, 68.7]),
+    "fsc": ([-1.4, -7.0], [60.2, 62.3]),
+    "topaz_southern": ([6.26, -94.75], [43.65, 39.06]),
+    "topaz_northern": ([186.47, 160.0], [51.63, 56.20]),
 }
 
 # Face-type sentinel values stored in ResolvedTransect.face_type
@@ -63,6 +63,7 @@ _FACE_V: np.uint8 = np.uint8(1)
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
 
 def _haversine_km(
     lon1: float | np.ndarray,
@@ -78,9 +79,7 @@ def _haversine_km(
     return 2.0 * _R_EARTH_KM * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
-def _forward_bearing(
-    lon1: float, lat1: float, lon2: float, lat2: float
-) -> float:
+def _forward_bearing(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     """Forward bearing in degrees clockwise from north."""
     dl = np.radians(lon2 - lon1)
     r1, r2 = np.radians(lat1), np.radians(lat2)
@@ -159,7 +158,11 @@ def _section_bearings(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
     for k in range(n):
         k0 = max(0, k - 1)
         k1 = min(n - 1, k + 1)
-        b[k] = _forward_bearing(lons[k0], lats[k0], lons[k1], lats[k1]) if k0 != k1 else 0.0
+        b[k] = (
+            _forward_bearing(lons[k0], lats[k0], lons[k1], lats[k1])
+            if k0 != k1
+            else 0.0
+        )
     return b
 
 
@@ -190,6 +193,7 @@ def _break_diagonals(
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ResolvedTransect:
@@ -228,7 +232,7 @@ class ResolvedTransect:
         Cumulative distance (km from section start) at the midpoint of each face.
     """
 
-    transect: "Transect"
+    transect: Transect
     j: np.ndarray
     i: np.ndarray
     cell_lon: np.ndarray
@@ -265,15 +269,15 @@ class ResolvedTransect:
 
     def plot(
         self,
-        ax: "matplotlib.axes.Axes | None" = None,
+        ax: matplotlib.axes.Axes | None = None,
         *,
-        grid: "xr.Dataset | str | None" = None,
-        bathy: "xr.Dataset | str | None" = None,
-        figsize: "tuple[float, float] | None" = None,
-        bathy_levels: "int | list[float]" = 6,
+        grid: xr.Dataset | str | None = None,
+        bathy: xr.Dataset | str | None = None,
+        figsize: tuple[float, float] | None = None,
+        bathy_levels: int | list[float] = 6,
         pad_deg: float = 2.0,
-        i_range: "tuple[int, int] | None" = None,
-        j_range: "tuple[int, int] | None" = None,
+        i_range: tuple[int, int] | None = None,
+        j_range: tuple[int, int] | None = None,
         color: str = "steelblue",
         show_cells: bool = False,
         waypoint_kw: dict | None = None,
@@ -328,7 +332,7 @@ class ResolvedTransect:
         if bathy is not None and grid is None:
             raise ValueError("grid= is required alongside bathy=.")
 
-        native = bathy is not None   # plot in (i, j) index space when bathy shown
+        native = bathy is not None  # plot in (i, j) index space when bathy shown
 
         if ax is None:
             _, ax = plt.subplots(figsize=figsize or (9, 5))
@@ -346,7 +350,7 @@ class ResolvedTransect:
         ulon_g = ulat_g = vlon_g = vlat_g = None
         if grid is not None:
             grid = _load_grid(grid)
-            plon = grid["plon"].values   # (jdm, idm)
+            plon = grid["plon"].values  # (jdm, idm)
             plat = grid["plat"].values
             ulon_g = grid["ulon"].values if "ulon" in grid else plon
             ulat_g = grid["ulat"].values if "ulat" in grid else plat
@@ -365,27 +369,42 @@ class ResolvedTransect:
             land = np.where(np.isnan(depth_vals), 1.0, np.nan)
             land_cmap = plt.cm.Greys.copy()
             land_cmap.set_bad("none")
-            ax.pcolormesh(land, cmap=land_cmap, vmin=0, vmax=1,
-                          shading="nearest", zorder=0)
+            ax.pcolormesh(
+                land, cmap=land_cmap, vmin=0, vmax=1, shading="nearest", zorder=0
+            )
 
             # Black depth contours (NaN land filled with 0 so contour doesn't choke)
             depth_filled = np.where(np.isnan(depth_vals), 0.0, depth_vals)
-            ax.contour(depth_filled, colors="black", linewidths=0.4,
-                       levels=bathy_levels, zorder=1)
-
+            ax.contour(
+                depth_filled,
+                colors="black",
+                linewidths=0.4,
+                levels=bathy_levels,
+                zorder=1,
+            )
 
         # --- HYCOM T-point scatter (full domain) ---
         if show_cells and plon is not None:
             if native:
                 jdm, idm = plon.shape
                 ii, jj = np.meshgrid(np.arange(idm), np.arange(jdm))
-                ax.scatter(ii.ravel(), jj.ravel(),
-                           s=2, color="0.6", linewidths=0, zorder=2,
-                           label="HYCOM T-points (cell centres)")
+                ax.scatter(
+                    ii.ravel(),
+                    jj.ravel(),
+                    s=2,
+                    color="0.6",
+                    linewidths=0,
+                    zorder=2,
+                    label="HYCOM T-points (cell centres)",
+                )
             else:
                 ax.scatter(
-                    plon.ravel(), plat.ravel(),
-                    s=2, color="0.6", linewidths=0, zorder=1,
+                    plon.ravel(),
+                    plat.ravel(),
+                    s=2,
+                    color="0.6",
+                    linewidths=0,
+                    zorder=1,
                     label="HYCOM T-points (cell centres)",
                 )
 
@@ -402,7 +421,7 @@ class ResolvedTransect:
         all_cx = all_cy = np.zeros(len(turn))
 
         if self.has_face_data:
-            is_u  = self.face_type == _FACE_U
+            is_u = self.face_type == _FACE_U
             fj_all = self.face_j
             fi_all = self.face_i
             if native:
@@ -413,7 +432,7 @@ class ResolvedTransect:
                 fy_all = np.where(is_u, ulat_g[fj_all, fi_all], vlat_g[fj_all, fi_all])
 
             if fx_all is not None and self.n_faces > 1:
-                ft    = self.face_type
+                ft = self.face_type
                 is_uv = (ft[:-1] == _FACE_U) & (ft[1:] == _FACE_V)
                 is_vu = (ft[:-1] == _FACE_V) & (ft[1:] == _FACE_U)
                 # U→V: shared Q = Q(fj[k+1]-1, fi[k]-1)
@@ -421,7 +440,9 @@ class ResolvedTransect:
                 cj_idx = np.where(is_uv, fj_all[1:] - 1, fj_all[:-1] - 1)
                 ci_idx = np.where(is_uv, fi_all[:-1] - 1, fi_all[1:] - 1)
                 jdm, idm = plon.shape
-                in_bounds = (cj_idx >= 0) & (ci_idx >= 0) & (cj_idx < jdm) & (ci_idx < idm)
+                in_bounds = (
+                    (cj_idx >= 0) & (ci_idx >= 0) & (cj_idx < jdm) & (ci_idx < idm)
+                )
                 turn = (is_uv | is_vu) & in_bounds
                 if native:
                     all_cx = ci_idx + 0.5
@@ -439,10 +460,8 @@ class ResolvedTransect:
                 # Middle T-cells for straight runs (U→U or V→V): T-cell between faces.
                 # sign>0: dest=(fj,fi); sign<0,U: dest=(fj,fi-1); sign<0,V: dest=(fj-1,fi)
                 sgn = self.face_sign
-                dest_j = np.where(sgn > 0, fj_all,
-                                  np.where(is_u, fj_all,     fj_all - 1))
-                dest_i = np.where(sgn > 0, fi_all,
-                                  np.where(is_u, fi_all - 1, fi_all))
+                dest_j = np.where(sgn > 0, fj_all, np.where(is_u, fj_all, fj_all - 1))
+                dest_i = np.where(sgn > 0, fi_all, np.where(is_u, fi_all - 1, fi_all))
                 not_turn = ~turn
                 mid_tj = dest_j[:-1][not_turn].astype(np.intp)
                 mid_ti = dest_i[:-1][not_turn].astype(np.intp)
@@ -455,10 +474,10 @@ class ResolvedTransect:
 
         # Build staircase: start T-cell → [face midpoint → corner? → face midpoint → …] → end T-cell
         if native:
-            x0, y0 = float(self.i[0]),  float(self.j[0])
+            x0, y0 = float(self.i[0]), float(self.j[0])
             x1, y1 = float(self.i[-1]), float(self.j[-1])
         else:
-            x0, y0 = float(self.cell_lon[0]),  float(self.cell_lat[0])
+            x0, y0 = float(self.cell_lon[0]), float(self.cell_lat[0])
             x1, y1 = float(self.cell_lon[-1]), float(self.cell_lat[-1])
 
         if fx_all is not None:
@@ -484,12 +503,21 @@ class ResolvedTransect:
             ax.scatter(
                 np.concatenate([fx_all, corner_x, mid_x]),
                 np.concatenate([fy_all, corner_y, mid_y]),
-                s=12, marker="o", color=color, zorder=4, linewidths=0,
+                s=12,
+                marker="o",
+                color=color,
+                zorder=4,
+                linewidths=0,
             )
 
         # --- Waypoints / endpoints ---
-        wp_kw = {"s": 60, "color": "tomato", "zorder": 5,
-                 "edgecolors": "white", "linewidths": 0.8}
+        wp_kw = {
+            "s": 60,
+            "color": "tomato",
+            "zorder": 5,
+            "edgecolors": "white",
+            "linewidths": 0.8,
+        }
         if waypoint_kw:
             wp_kw.update(waypoint_kw)
         if native:
@@ -500,14 +528,21 @@ class ResolvedTransect:
 
         if label_endpoints:
             for ci, cj, lon, lat in [
-                (self.i[0],  self.j[0],  self.transect.lons[0],  self.transect.lats[0]),
-                (self.i[-1], self.j[-1], self.transect.lons[-1], self.transect.lats[-1]),
+                (self.i[0], self.j[0], self.transect.lons[0], self.transect.lats[0]),
+                (
+                    self.i[-1],
+                    self.j[-1],
+                    self.transect.lons[-1],
+                    self.transect.lats[-1],
+                ),
             ]:
                 ax.annotate(
                     f"({lon:.1f}, {lat:.1f})",
                     xy=(ci if native else lon, cj if native else lat),
-                    xytext=(4, 4), textcoords="offset points",
-                    fontsize=8, color="tomato",
+                    xytext=(4, 4),
+                    textcoords="offset points",
+                    fontsize=8,
+                    color="tomato",
                 )
 
         name = self.transect.name or "Section"
@@ -529,10 +564,10 @@ class ResolvedTransect:
             ax.legend(handles, labels, fontsize=7, loc="best")
 
 
-
 # ---------------------------------------------------------------------------
 # Transect
 # ---------------------------------------------------------------------------
+
 
 class Transect:
     """An oceanographic section defined by ordered (lon, lat) waypoints.
@@ -582,7 +617,7 @@ class Transect:
     # ------------------------------------------------------------------
 
     @classmethod
-    def named(cls, name: str) -> "Transect":
+    def named(cls, name: str) -> Transect:
         """Return a built-in named section.
 
         Parameters
@@ -608,7 +643,7 @@ class Transect:
         """Return a sorted list of built-in section names."""
         return sorted(_NAMED_SECTIONS)
 
-    def reverse(self) -> "Transect":
+    def reverse(self) -> Transect:
         """Return a copy of this transect with the waypoint order reversed.
 
         Reversing the waypoints flips the sign convention: flow that was
@@ -716,16 +751,16 @@ class Transect:
         # Face sign convention: +1 when the section steps in the face's
         # positive-normal direction (+i for U-faces, +j for V-faces), else -1.
         # ------------------------------------------------------------------
-        face_type_list:  list[int]   = []
-        face_j_list:     list[int]   = []
-        face_i_list:     list[int]   = []
-        face_sign_list:  list[float] = []
-        face_t1j_list:   list[int]   = []
-        face_t1i_list:   list[int]   = []
-        face_t2j_list:   list[int]   = []
-        face_t2i_list:   list[int]   = []
+        face_type_list: list[int] = []
+        face_j_list: list[int] = []
+        face_i_list: list[int] = []
+        face_sign_list: list[float] = []
+        face_t1j_list: list[int] = []
+        face_t1i_list: list[int] = []
+        face_t2j_list: list[int] = []
+        face_t2i_list: list[int] = []
         face_width_list: list[float] = []
-        face_dist_list:  list[float] = []
+        face_dist_list: list[float] = []
 
         for k in range(len(j_cells) - 1):
             j1, i1 = int(j_cells[k]), int(i_cells[k])
@@ -737,38 +772,50 @@ class Transect:
                 # Step +i: U-face at (j1, i2), normal in +i  →  sign = +1
                 # Face is the western face of T(j1, i2), between T(j1,i1) and T(j1,i2)
                 face_type_list.append(int(_FACE_U))
-                face_j_list.append(j1);  face_i_list.append(i2)
+                face_j_list.append(j1)
+                face_i_list.append(i2)
                 face_sign_list.append(1.0)
-                face_t1j_list.append(j1); face_t1i_list.append(i1)
-                face_t2j_list.append(j1); face_t2i_list.append(i2)
+                face_t1j_list.append(j1)
+                face_t1i_list.append(i1)
+                face_t2j_list.append(j1)
+                face_t2i_list.append(i2)
                 face_width_list.append(float(scuy[j1, i2]))
 
             elif dj == 0 and di == -1:
                 # Step -i: U-face at (j1, i1), normal in +i  →  sign = -1
                 face_type_list.append(int(_FACE_U))
-                face_j_list.append(j1);  face_i_list.append(i1)
+                face_j_list.append(j1)
+                face_i_list.append(i1)
                 face_sign_list.append(-1.0)
-                face_t1j_list.append(j1); face_t1i_list.append(i1)
-                face_t2j_list.append(j1); face_t2i_list.append(i2)
+                face_t1j_list.append(j1)
+                face_t1i_list.append(i1)
+                face_t2j_list.append(j1)
+                face_t2i_list.append(i2)
                 face_width_list.append(float(scuy[j1, i1]))
 
             elif dj == 1 and di == 0:
                 # Step +j: V-face at (j2, i1), normal in +j  →  sign = +1
                 # Face is the southern face of T(j2, i1), between T(j1,i1) and T(j2,i1)
                 face_type_list.append(int(_FACE_V))
-                face_j_list.append(j2);  face_i_list.append(i1)
+                face_j_list.append(j2)
+                face_i_list.append(i1)
                 face_sign_list.append(1.0)
-                face_t1j_list.append(j1); face_t1i_list.append(i1)
-                face_t2j_list.append(j2); face_t2i_list.append(i1)
+                face_t1j_list.append(j1)
+                face_t1i_list.append(i1)
+                face_t2j_list.append(j2)
+                face_t2i_list.append(i1)
                 face_width_list.append(float(scvx[j2, i1]))
 
             elif dj == -1 and di == 0:
                 # Step -j: V-face at (j1, i1), normal in +j  →  sign = -1
                 face_type_list.append(int(_FACE_V))
-                face_j_list.append(j1);  face_i_list.append(i1)
+                face_j_list.append(j1)
+                face_i_list.append(i1)
                 face_sign_list.append(-1.0)
-                face_t1j_list.append(j2); face_t1i_list.append(i2)
-                face_t2j_list.append(j1); face_t2i_list.append(i1)
+                face_t1j_list.append(j2)
+                face_t1i_list.append(i2)
+                face_t2j_list.append(j1)
+                face_t2i_list.append(i1)
                 face_width_list.append(float(scvx[j1, i1]))
 
             else:
@@ -815,9 +862,11 @@ class Transect:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_grid(grid: xr.Dataset | str) -> xr.Dataset:
     """Accept a path or pre-loaded Dataset; return a Dataset."""
     if isinstance(grid, xr.Dataset):
         return grid
     from . import open_dataset
+
     return open_dataset(str(grid))
