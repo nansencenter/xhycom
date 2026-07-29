@@ -15,7 +15,7 @@ dependencies = [
     "xarray",
     "cftime",
     "dask",
-    "xgcm",
+    "xgcm>=0.10.1",
     "numba",   # required by xgcm's Grid.transform for method="conservative"
                # (regrid_vertical's default)
 ]

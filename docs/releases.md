@@ -8,6 +8,8 @@
 
 ### 🐛 Bug Fixes
 
+* Fix xgcm-related bug and pin xgcm ([#14](https://github.com/nansencenter/xhycom/pull/14))
+
 ### 📚 Documentation
 
 * Installation instructions for Conda and Pip ([#13](https://github.com/nansencenter/xhycom/pull/13))
@@ -18,13 +20,9 @@
 
 ## v0.1.0 (July 9, 2026)
 
-### 🚨 Breaking Changes
-
 ### ✨ New Features
 
 * Release notes ([#7](https://github.com/nansencenter/xhycom/pull/7))
-
-### 🐛 Bug Fixes
 
 ### 📚 Documentation
 

@@ -987,7 +987,7 @@ def regrid_vertical(
         grid = xgcm.Grid(
             ds_g,
             coords={"Z": {"center": layer_dim, "outer": iface_dim}},
-            periodic=False,
+            padding="fill",
             autoparse_metadata=False,
         )
         # *depth* are the output levels (centres); build the surrounding bin
@@ -1009,7 +1009,7 @@ def regrid_vertical(
         grid = xgcm.Grid(
             ds,
             coords={"Z": {"center": layer_dim}},
-            periodic=False,
+            padding="fill",
             autoparse_metadata=False,
         )
         depth_out = depth
