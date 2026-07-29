@@ -227,3 +227,57 @@ def test_section_plot_handles_nan_values() -> None:
     ds["temp"] = (("k", "section"), vals)
     ax = section_plot(ds, "temp")
     assert ax is not None
+
+
+# ---------------------------------------------------------------------------
+# Auto colorbar label from variable attrs
+# ---------------------------------------------------------------------------
+
+
+def test_section_plot_auto_colorbar_label_from_attrs() -> None:
+    """Colorbar label is built from the variable's long_name and units attrs."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    ds = _make_section_ds()
+    ds["temp"].attrs = {"long_name": "potential temperature", "units": "°C"}
+    section_plot(ds, "temp", ax=ax, add_colorbar=True)
+    cb_ax = fig.axes[1]
+    label = cb_ax.get_ylabel()
+    assert "potential temperature" in label
+    assert "°C" in label
+
+
+# ---------------------------------------------------------------------------
+# Face dimension (section_flux_density output)
+# ---------------------------------------------------------------------------
+
+
+def _make_face_ds(nk: int = 5, nf: int = 8) -> xr.Dataset:
+    """Synthetic (k, face) dataset mimicking section_flux_density output."""
+    values = np.linspace(-2.0, 2.0, nk * nf).reshape(nk, nf)
+    distance = np.linspace(0.0, 100.0, nf)
+    depth_2d = np.tile(np.linspace(5.0, 50.0 * nk, nk)[:, None], (1, nf))
+    return xr.Dataset(
+        {
+            "flux_density": (("k", "face"), values),
+            "depth_m": (("k", "face"), depth_2d),
+        },
+        coords={"distance_km": ("face", distance)},
+    )
+
+
+def test_section_plot_face_dim_smoke() -> None:
+    """section_plot accepts (k, face) datasets from section_flux_density."""
+    ax = section_plot(_make_face_ds(), "flux_density", center_zero=True)
+    assert ax is not None
+
+
+def test_section_plot_center_zero_all_finite() -> None:
+    """center_zero=True on all-finite data sets symmetric vmin/vmax."""
+    ds = _make_section_ds()
+    ds["temp"] = (("k", "section"), np.ones((5, 10)) * 3.0)
+    ax = section_plot(ds, "temp", center_zero=True)
+    # Both collections should use symmetric limits around zero
+    pc = ax.collections[0]
+    assert pc.norm.vmin == pytest.approx(-pc.norm.vmax, rel=1e-6)

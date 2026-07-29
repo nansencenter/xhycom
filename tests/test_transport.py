@@ -583,3 +583,218 @@ def test_transport_tpoint_output_units_sv() -> None:
     t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
     tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
     assert tr["volume"].attrs.get("units") == "Sv"
+
+
+# ---------------------------------------------------------------------------
+# V-face transport
+# ---------------------------------------------------------------------------
+
+_N_V_FACES = 3
+_V_VAL = 0.5  # m/s — kept small to distinguish from U_VAL = 1.0
+_NY_V = 6  # grid rows needed for V-face indices up to j=3
+
+
+def _make_v_ds(
+    ny: int = _NY_V,
+    nx: int = NX,
+    nk: int = N_K,
+    v_val: float = _V_VAL,
+    thk_m: float = THK_M,
+    temp_val: float = TEMP_VAL,
+    sal_val: float = SAL_VAL,
+) -> xr.Dataset:
+    """Uniform HYCOM-like dataset for V-face tests: u=0, v=v_val."""
+    return xr.Dataset(
+        {
+            "u-vel.": (("k", "y", "x"), np.zeros((nk, ny, nx))),
+            "v-vel.": (("k", "y", "x"), np.full((nk, ny, nx), v_val)),
+            "thknss": (
+                ("k", "y", "x"),
+                np.full((nk, ny, nx), thk_m),
+                {"units": "m"},
+            ),
+            "temp": (("k", "y", "x"), np.full((nk, ny, nx), temp_val)),
+            "salin": (("k", "y", "x"), np.full((nk, ny, nx), sal_val)),
+        }
+    )
+
+
+def _make_v_resolved(
+    n_faces: int = _N_V_FACES,
+    width_m: float = WIDTH_M,
+) -> ResolvedTransect:
+    """Synthetic ResolvedTransect: n_faces northward V-faces at column i=0."""
+    t = Transect(lons=np.zeros(n_faces + 1), lats=np.arange(n_faces + 1, dtype=float))
+    fj = np.arange(1, n_faces + 1, dtype=np.intp)
+    fi = np.zeros(n_faces, dtype=np.intp)
+    return ResolvedTransect(
+        transect=t,
+        j=np.arange(n_faces + 1, dtype=np.intp),
+        i=np.zeros(n_faces + 1, dtype=np.intp),
+        cell_lon=np.zeros(n_faces + 1),
+        cell_lat=np.arange(n_faces + 1, dtype=float),
+        distance_km=np.arange(n_faces + 1, dtype=float),
+        cell_width_km=np.ones(n_faces + 1),
+        bearing_deg=np.zeros(n_faces + 1),
+        face_type=np.ones(n_faces, dtype=np.uint8),  # 1 = V-face
+        face_j=fj,
+        face_i=fi,
+        face_sign=np.ones(n_faces),
+        face_t1_j=np.arange(n_faces, dtype=np.intp),
+        face_t1_i=np.zeros(n_faces, dtype=np.intp),
+        face_t2_j=np.arange(1, n_faces + 1, dtype=np.intp),
+        face_t2_i=np.zeros(n_faces, dtype=np.intp),
+        face_width_m=np.full(n_faces, width_m),
+        face_dist_km=np.arange(n_faces, dtype=float) + 0.5,
+    )
+
+
+_EXPECTED_V_VOL_SV = _N_V_FACES * N_K * _V_VAL * THK_M * WIDTH_M * 1e-6
+
+
+def test_transport_v_face_volume_exact() -> None:
+    """V-face transport: uniform v-vel gives the expected volume transport."""
+    tr = transport(_make_v_ds(), _make_v_resolved())
+    np.testing.assert_allclose(tr["volume"].item(), _EXPECTED_V_VOL_SV, rtol=1e-10)
+
+
+def test_transport_v_face_u_zero_does_not_contribute() -> None:
+    """U-faces with u=0 contribute nothing when only V-faces carry flow."""
+    # A mixed resolved transect would need U-faces, but here all faces are V.
+    # Verify that if we swap to a pure-U resolved with v_val only, result is zero.
+    tr_u = transport(_make_v_ds(), _make_resolved())  # U-faces, v_val flows via v-vel
+    np.testing.assert_allclose(tr_u["volume"].item(), 0.0, atol=1e-15)
+
+
+def test_transport_v_face_integral_consistent() -> None:
+    """section_flux_density V-face integral matches transport V-face volume."""
+    r = _make_v_resolved()
+    ds = _make_v_ds()
+    fd = section_flux_density(ds, r)
+    tr = transport(ds, r)
+    integral = float((fd["flux_density"] * fd["face_width_m"]).sum())
+    np.testing.assert_allclose(integral, tr["volume"].item() * 1e6, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# _ensure_resolved error paths
+# ---------------------------------------------------------------------------
+
+
+def test_transport_unresolved_transect_without_grid_raises() -> None:
+    """transport() with unresolved Transect and no grid raises ValueError."""
+    t = Transect(lons=[0.0, 1.0], lats=[0.0, 0.0])
+    with pytest.raises(ValueError, match="grid="):
+        transport(_make_ds(), t)
+
+
+def test_section_data_unresolved_without_grid_raises() -> None:
+    """section_data() with unresolved Transect and no grid raises ValueError."""
+    t = Transect(lons=[0.0, 1.0], lats=[0.0, 0.0])
+    with pytest.raises(ValueError, match="grid="):
+        section_data(_make_ds(), t)
+
+
+def test_section_flux_density_unresolved_without_grid_raises() -> None:
+    """section_flux_density() with unresolved Transect and no grid raises ValueError."""
+    t = Transect(lons=[0.0, 1.0], lats=[0.0, 0.0])
+    with pytest.raises(ValueError, match="grid="):
+        section_flux_density(_make_ds(), t)
+
+
+# ---------------------------------------------------------------------------
+# transport — saln salinity fallback
+# ---------------------------------------------------------------------------
+
+
+def test_transport_saln_fallback() -> None:
+    """Transport auto-detects 'saln' when 'salin' is absent."""
+    ds = _make_ds().rename({"salin": "saln"})
+    tr = transport(ds, _make_resolved())
+    assert "salt" in tr
+    assert "fw" in tr
+
+
+# ---------------------------------------------------------------------------
+# section_flux_density — salt and freshwater density
+# ---------------------------------------------------------------------------
+
+
+def test_section_flux_density_salt_integral_matches_transport() -> None:
+    """Integral of salt_flux_density × face_width_m equals transport salt (kg s⁻¹)."""
+    r = _make_resolved()
+    ds = _make_ds()
+    fd = section_flux_density(ds, r)
+    tr = transport(ds, r)
+    assert "salt_flux_density" in fd
+    integral = float((fd["salt_flux_density"] * fd["face_width_m"]).sum())
+    np.testing.assert_allclose(integral, tr["salt"].item(), rtol=1e-10)
+
+
+def test_section_flux_density_fw_integral_matches_transport() -> None:
+    """Integral of fw_flux_density × face_width_m equals transport fw (m³ s⁻¹)."""
+    r = _make_resolved()
+    ds = _make_ds()
+    fd = section_flux_density(ds, r)
+    tr = transport(ds, r)
+    assert "fw_flux_density" in fd
+    integral = float((fd["fw_flux_density"] * fd["face_width_m"]).sum())
+    np.testing.assert_allclose(integral, tr["fw"].item() * 1e6, rtol=1e-10)
+
+
+def test_section_flux_density_saln_fallback() -> None:
+    """section_flux_density auto-detects 'saln' when 'salin' is absent."""
+    ds = _make_ds().rename({"salin": "saln"})
+    fd = section_flux_density(ds, _make_resolved())
+    assert "salt_flux_density" in fd
+    assert "fw_flux_density" in fd
+
+
+def test_section_flux_density_constraint_zeros_flux() -> None:
+    """Constraint that no cell passes gives all-zero flux_density."""
+    r = _make_resolved()
+    ds = _make_ds(temp_val=5.0)
+    fd = section_flux_density(ds, r, constraints={"temp": ("gt", 10.0)})
+    np.testing.assert_allclose(fd["flux_density"].values, 0.0, atol=1e-15)
+
+
+def test_section_flux_density_missing_var_raises() -> None:
+    """Missing required velocity variable raises ValueError."""
+    ds = _make_ds().drop_vars("u-vel.")
+    with pytest.raises(ValueError, match="u-vel"):
+        section_flux_density(ds, _make_resolved())
+
+
+# ---------------------------------------------------------------------------
+# transport_tpoint — salt/fw and error paths
+# ---------------------------------------------------------------------------
+
+
+def test_transport_tpoint_with_salinity() -> None:
+    """transport_tpoint computes salt and fw when salinity ('so') is present."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds(sal_val=SAL_VAL)
+    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
+    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    assert "salt" in tr
+    assert "fw" in tr
+
+
+def test_transport_tpoint_heat_zero_at_tref() -> None:
+    """transport_tpoint heat transport is zero when temperature equals t_ref."""
+    pytest.importorskip("scipy")
+    from xhycom._transport import _TREF
+
+    ds = _make_glorys_ds(temp_val=_TREF)
+    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
+    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    np.testing.assert_allclose(tr["heat"].item(), 0.0, atol=1e-12)
+
+
+def test_transport_tpoint_missing_u_raises() -> None:
+    """transport_tpoint raises ValueError when u_var is absent."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds().drop_vars("uo")
+    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
+    with pytest.raises(ValueError, match="uo"):
+        transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
