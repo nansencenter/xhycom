@@ -17,6 +17,7 @@
 ### 🔧 Internal
 
 * Proper PyPI publishing ([#13](https://github.com/nansencenter/xhycom/pull/13))
+* Make codecov not block PRs ([#15](https://github.com/nansencenter/xhycom/pull/15))
 
 ## v0.1.0 (July 9, 2026)
 
