@@ -1,5 +1,6 @@
 """Tests for xhycom._transect: geometry helpers, Transect, and ResolvedTransect."""
 
+import matplotlib
 import numpy as np
 import pytest
 import xarray as xr
@@ -263,6 +264,82 @@ def test_transect_available_names_sorted() -> None:
     assert "fram_strait" in names
     assert "bering_strait" in names
     assert "fsc" in names
+    assert "topaz_southern" not in names
+    assert "topaz_northern" not in names
+
+
+# ---------------------------------------------------------------------------
+# Transect.from_boundary_row
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def boundary_grid_bathy() -> tuple[xr.Dataset, xr.Dataset]:
+    """5×10 synthetic grid; row 0 all land, row 1 partially wet, row 4 wet."""
+    jdm, idm = 5, 10
+    j, i = np.meshgrid(np.arange(jdm), np.arange(idm), indexing="ij")
+    grid = xr.Dataset(
+        {
+            "plon": (("y", "x"), i.astype(float)),
+            "plat": (("y", "x"), (45.0 + j).astype(float)),
+            "scuy": (("y", "x"), np.full((jdm, idm), 111_000.0)),
+            "scvx": (("y", "x"), np.full((jdm, idm), 74_000.0)),
+        }
+    )
+    depth = np.full((jdm, idm), 1000.0)
+    depth[0, :] = np.nan  # southern edge: all land
+    depth[1, :3] = np.nan  # partial land in first wet row
+    bathy = xr.Dataset({"depth": (("y", "x"), depth)})
+    return grid, bathy
+
+
+def test_from_boundary_row_returns_transect(
+    boundary_grid_bathy: tuple[xr.Dataset, xr.Dataset],
+) -> None:
+    """from_boundary_row returns a Transect with at least 2 waypoints."""
+    grid, bathy = boundary_grid_bathy
+    t = Transect.from_boundary_row(grid, j=1, bathy=bathy)
+    assert isinstance(t, Transect)
+    assert len(t.lons) >= 2
+
+
+def test_from_boundary_row_skips_land(
+    boundary_grid_bathy: tuple[xr.Dataset, xr.Dataset],
+) -> None:
+    """from_boundary_row only uses wet cells as waypoints."""
+    grid, bathy = boundary_grid_bathy
+    t = Transect.from_boundary_row(grid, j=1, bathy=bathy)
+    # Columns 0-2 are land at j=1; wet starts at i=3
+    assert t.lons[0] == pytest.approx(3.0)
+
+
+def test_from_boundary_row_name_propagated(
+    boundary_grid_bathy: tuple[xr.Dataset, xr.Dataset],
+) -> None:
+    """from_boundary_row propagates the name argument."""
+    grid, bathy = boundary_grid_bathy
+    t = Transect.from_boundary_row(grid, j=1, bathy=bathy, name="my_boundary")
+    assert t.name == "my_boundary"
+
+
+def test_from_boundary_row_i_range(
+    boundary_grid_bathy: tuple[xr.Dataset, xr.Dataset],
+) -> None:
+    """from_boundary_row with i_range restricts columns."""
+    grid, bathy = boundary_grid_bathy
+    t = Transect.from_boundary_row(grid, j=4, bathy=bathy, i_range=(3, 6))
+    assert t.lons[0] == pytest.approx(3.0)
+    assert t.lons[-1] == pytest.approx(6.0)
+    assert len(t.lons) == 4
+
+
+def test_from_boundary_row_all_land_raises(
+    boundary_grid_bathy: tuple[xr.Dataset, xr.Dataset],
+) -> None:
+    """from_boundary_row raises ValueError when the row is entirely land."""
+    grid, bathy = boundary_grid_bathy
+    with pytest.raises(ValueError, match="Fewer than 2 wet cells"):
+        Transect.from_boundary_row(grid, j=0, bathy=bathy)
 
 
 def test_transect_reverse_flips_waypoints() -> None:
@@ -397,3 +474,95 @@ def test_resolved_has_face_data_false_without_faces() -> None:
     assert not r.has_face_data
     assert r.n_faces == 0
     assert r.n_cells == 2
+
+
+# ---------------------------------------------------------------------------
+# Transect.__repr__
+# ---------------------------------------------------------------------------
+
+
+def test_transect_repr_with_name() -> None:
+    """Repr includes the name and waypoint count."""
+    t = Transect(lons=[0.0, 1.0], lats=[0.0, 0.0], name="my_section")
+    r = repr(t)
+    assert "my_section" in r
+    assert "2" in r
+
+
+def test_transect_repr_unnamed() -> None:
+    """Repr for a nameless Transect contains 'unnamed'."""
+    t = Transect(lons=[0.0, 1.0, 2.0], lats=[0.0, 0.0, 0.0])
+    assert "unnamed" in repr(t)
+
+
+# ---------------------------------------------------------------------------
+# V-face signs from resolve()
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_northward_step_sign_positive(simple_grid: xr.Dataset) -> None:
+    """Walking north (Δj=+1) gives face_sign = +1 for V-faces."""
+    pytest.importorskip("scipy")
+    r = Transect(lons=[5.0, 5.0], lats=[46.0, 52.0]).resolve(simple_grid)
+    assert np.all(r.face_sign == 1.0)
+
+
+def test_resolve_southward_step_sign_negative(simple_grid: xr.Dataset) -> None:
+    """Walking south (Δj=-1) gives face_sign = -1 for V-faces."""
+    pytest.importorskip("scipy")
+    r = Transect(lons=[5.0, 5.0], lats=[52.0, 46.0]).resolve(simple_grid)
+    assert np.all(r.face_sign == -1.0)
+
+
+def test_resolve_nfaces_one_less_than_ncells(simple_grid: xr.Dataset) -> None:
+    """A simple orthogonal path has exactly n_cells-1 faces."""
+    pytest.importorskip("scipy")
+    r = Transect(lons=[2.0, 8.0], lats=[49.0, 49.0]).resolve(simple_grid)
+    assert r.n_faces == r.n_cells - 1
+
+
+# ---------------------------------------------------------------------------
+# ResolvedTransect.plot — smoke tests
+# ---------------------------------------------------------------------------
+
+
+matplotlib.use("Agg")
+
+
+def _make_bare_resolved() -> ResolvedTransect:
+    """Minimal ResolvedTransect without face data for plot smoke tests."""
+    t = Transect(lons=[0.0, 5.0], lats=[45.0, 45.0])
+    return ResolvedTransect(
+        transect=t,
+        j=np.array([0, 1, 2], dtype=np.intp),
+        i=np.array([0, 1, 2], dtype=np.intp),
+        cell_lon=np.array([0.0, 2.5, 5.0]),
+        cell_lat=np.full(3, 45.0),
+        distance_km=np.array([0.0, 200.0, 400.0]),
+        cell_width_km=np.array([100.0, 200.0, 100.0]),
+        bearing_deg=np.full(3, 90.0),
+    )
+
+
+def test_resolved_plot_basic_smoke() -> None:
+    """plot() without a grid runs without error."""
+    import matplotlib.pyplot as plt
+
+    _make_bare_resolved().plot()
+    plt.close("all")
+
+
+def test_resolved_plot_bathy_without_grid_raises() -> None:
+    """plot(bathy=...) without grid raises ValueError."""
+    with pytest.raises(ValueError, match="grid="):
+        _make_bare_resolved().plot(bathy="some_path")
+
+
+def test_resolved_plot_with_face_data_smoke(simple_grid: xr.Dataset) -> None:
+    """plot() on a fully resolved transect (with face data) runs without error."""
+    import matplotlib.pyplot as plt
+
+    pytest.importorskip("scipy")
+    r = Transect(lons=[2.0, 8.0], lats=[49.0, 49.0]).resolve(simple_grid)
+    r.plot()
+    plt.close("all")

@@ -51,8 +51,6 @@ _NAMED_SECTIONS: dict[str, tuple[list[float], list[float]]] = {
     "svinoy": ([5.5, -7.0], [62.0, 62.3]),
     "gimsoy": ([5.0, 16.2], [70.5, 68.7]),
     "fsc": ([-1.4, -7.0], [60.2, 62.3]),
-    "topaz_southern": ([6.26, -94.75], [43.65, 39.06]),
-    "topaz_northern": ([186.47, 160.0], [51.63, 56.20]),
 }
 
 # Face-type sentinel values stored in ResolvedTransect.face_type
@@ -642,6 +640,97 @@ class Transect:
     def available_names(cls) -> list[str]:
         """Return a sorted list of built-in section names."""
         return sorted(_NAMED_SECTIONS)
+
+    @classmethod
+    def from_boundary_row(
+        cls,
+        grid: xr.Dataset | str,
+        j: int,
+        bathy: xr.Dataset | str,
+        *,
+        i_range: tuple[int, int] | None = None,
+        name: str | None = None,
+    ) -> Transect:
+        """Create a Transect from the wet cells along a single grid row.
+
+        Intended for domain-boundary transects (e.g. TOPAZ open boundaries)
+        where the outermost row lies entirely on land.  Pass the first interior
+        wet row (``j=1`` for the southern boundary, ``grid.dims['y']-2`` for
+        the northern boundary) and this factory extracts the positions of all
+        wet cells in that row as waypoints.
+
+        Parameters
+        ----------
+        grid:
+            HYCOM grid Dataset or path to ``regional.grid``.
+        j:
+            Row index (0-based) to extract wet-cell waypoints from.
+        bathy:
+            Bathymetry Dataset (opened with ``xhycom.open_dataset``) or path.
+            Used to identify wet cells (finite depth) in the row.
+        i_range:
+            Optional ``(i_min, i_max)`` (inclusive on both ends) to restrict
+            the column range.  Useful when a boundary row is only wet over a
+            sub-range of columns.
+        name:
+            Human-readable label for the resulting Transect.
+
+        Returns
+        -------
+        Transect
+            Waypoints at the positions of every wet cell in row *j* (within
+            *i_range* if given), ordered west-to-east by column index.
+
+        Raises
+        ------
+        ValueError
+            If fewer than two wet cells are found in the requested row/range.
+
+        Examples
+        --------
+        >>> topaz_southern = xhycom.Transect.from_boundary_row(
+        ...     grid, j=1, bathy=bathy, name="topaz_southern"
+        ... )
+        >>> topaz_northern = xhycom.Transect.from_boundary_row(
+        ...     grid, j=grid.dims["y"] - 2, bathy=bathy, name="topaz_northern"
+        ... )
+        """
+        grid_ds = _load_grid(grid)
+        bathy_ds = _load_grid(bathy)
+
+        plon: np.ndarray = grid_ds["plon"].values[j, :]
+        plat: np.ndarray = grid_ds["plat"].values[j, :]
+        depth_row: np.ndarray = bathy_ds["depth"].values[j, :]
+
+        i_lo = 0
+        i_hi = len(plon) - 1
+        if i_range is not None:
+            i_lo, i_hi = int(i_range[0]), int(i_range[1])
+
+        depth_sub = depth_row[i_lo : i_hi + 1]
+        wet_idx = np.where(np.isfinite(depth_sub))[0]
+
+        if len(wet_idx) < 2:
+            raise ValueError(
+                f"Fewer than 2 wet cells found at j={j}"
+                + (f", i_range={i_range}" if i_range is not None else "")
+                + ". Check j index and i_range."
+            )
+
+        wet_abs = wet_idx + i_lo
+        lons = plon[wet_abs].copy()
+        # Unwrap so consecutive waypoints never jump more than 180° in longitude,
+        # preventing _sample_polyline from interpolating "the long way round"
+        # across the date line (e.g. Bering Sea sections near 180°E/W).
+        shifts = np.cumsum(
+            np.where(
+                np.diff(lons) > 180,
+                -360.0,
+                np.where(np.diff(lons) < -180, 360.0, 0.0),
+            )
+        )
+        lons[1:] += shifts
+        return cls(lons=lons, lats=plat[wet_abs], name=name)
 
     def reverse(self) -> Transect:
         """Return a copy of this transect with the waypoint order reversed.
