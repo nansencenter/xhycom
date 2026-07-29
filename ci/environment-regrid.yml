@@ -9,7 +9,7 @@ dependencies:
   - cftime
 
   # --- regridding ---
-  - xgcm
+  - xgcm>=0.10.1
   - xesmf
   - dask
   - numba     # xgcm's Grid.transform needs this for method="conservative"
