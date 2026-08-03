@@ -8,6 +8,14 @@
 
 ### 🐛 Bug Fixes
 
+### 📚 Documentation
+
+### 🔧 Internal
+
+## v0.1.1 (August 3, 2026)
+
+### 🐛 Bug Fixes
+
 * Fix xgcm-related bug and pin xgcm ([#14](https://github.com/nansencenter/xhycom/pull/14))
 
 ### 📚 Documentation
