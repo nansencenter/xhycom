@@ -120,13 +120,22 @@ Slice, select, and visualize HYCOM fields with xarray.
 Remap onto a regular lon/lat/depth grid for reanalysis comparisons.
 :::
 
-:::{grid-item-card} Transport
-:link: transport
+:::{grid-item-card} Transects and transport
+:link: transects_transports
 :link-type: doc
 
 {octicon}`milestone;2em;sd-text-primary`
 
-Compute volume, heat, salt, and freshwater transports through named sections.
+Define sections, resolve them on the HYCOM C-grid, and compute volume, heat, salt, and freshwater transports.
+:::
+
+:::{grid-item-card} Comparing with GLORYS
+:link: comparison_transects_transports
+:link-type: doc
+
+{octicon}`git-compare;2em;sd-text-primary`
+
+Compare HYCOM transports and hydrographic sections against GLORYS reanalysis using three regridding strategies.
 :::
 
 :::{grid-item-card} Time averaging
@@ -202,7 +211,8 @@ lazy-loading.ipynb
 analysis.ipynb
 regridding.ipynb
 time-averaging.ipynb
-transport.ipynb
+transects_transports.ipynb
+comparison_transects_transports.ipynb
 big-computations.ipynb
 why-xarray
 api
