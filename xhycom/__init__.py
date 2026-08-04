@@ -38,7 +38,6 @@ from ._transport import (
     section_data,
     section_flux_density,
     transport,
-    transport_tpoint,
 )
 
 # Private alias so the public `postprocess` name can also be a keyword argument
@@ -61,7 +60,6 @@ __all__ = [
     "section_flux_density",
     "section_plot",
     "transport",
-    "transport_tpoint",
     "velocities_east_north",
 ]
 
