@@ -1,4 +1,4 @@
-"""Tests for xhycom._transport: transport, section_data, section_flux_density, transport_tpoint."""
+"""Tests for xhycom._transport: transport, section_data, section_flux_density."""
 
 import numpy as np
 import pytest
@@ -16,7 +16,6 @@ from xhycom._transport import (
     section_data,
     section_flux_density,
     transport,
-    transport_tpoint,
 )
 
 # ---------------------------------------------------------------------------
@@ -229,9 +228,9 @@ def test_transport_volume_pa_thickness_matches_m() -> None:
     )
 
 
-def test_transport_raises_no_face_data() -> None:
-    """ResolvedTransect without face data raises ValueError."""
-    with pytest.raises(ValueError, match="no face data"):
+def test_transport_raises_no_face_data_no_z_dim() -> None:
+    """ResolvedTransect without face data and no z_dim raises ValueError."""
+    with pytest.raises(ValueError, match="z_dim"):
         transport(_make_ds(), _make_tcell_resolved())
 
 
@@ -472,7 +471,7 @@ def test_section_flux_density_raises_no_face_data() -> None:
 
 
 # ---------------------------------------------------------------------------
-# transport_tpoint — requires scipy
+# transport (generic T-point path) — requires scipy
 # ---------------------------------------------------------------------------
 
 
@@ -501,87 +500,63 @@ def _make_glorys_ds(
     )
 
 
-def test_transport_tpoint_returns_volume() -> None:
-    """transport_tpoint returns a Dataset with a volume variable."""
+def _resolve_glorys(ds, lons, lats):
+    """Resolve a transect against a GLORYS-like dataset."""
+    return Transect(lons=lons, lats=lats).resolve(
+        ds, lat_var="latitude", lon_var="longitude"
+    )
+
+
+def test_transport_generic_returns_volume() -> None:
+    """transport() on a generic resolved transect returns a Dataset with volume."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds()
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     assert "volume" in tr
 
 
-def test_transport_tpoint_ns_section_uo_positive() -> None:
+def test_transport_generic_ns_section_uo_positive() -> None:
     """N–S section with uo=1 gives positive volume (rightward = eastward)."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds(u_val=1.0, v_val=0.0)
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     assert tr["volume"].item() > 0
 
 
-def test_transport_tpoint_ew_section_vo_negative() -> None:
+def test_transport_generic_ew_section_vo_negative() -> None:
     """E–W section with vo=1 gives negative volume (rightward = southward)."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds(u_val=0.0, v_val=1.0)
-    t = Transect(lons=[2.0, 8.0], lats=[47.0, 47.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [2.0, 8.0], [47.0, 47.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     assert tr["volume"].item() < 0
 
 
-def test_transport_tpoint_constraint_zeros_all() -> None:
+def test_transport_generic_constraint_zeros_all() -> None:
     """Constraint that no cell passes gives zero volume."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds(temp_val=2.0)
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(
         ds,
-        t,
-        lat_dim="latitude",
-        lon_dim="longitude",
+        r,
+        u_var="uo",
+        v_var="vo",
+        t_var="thetao",
         z_dim="depth",
         constraints={"thetao": ("gt", 10.0)},
     )
     np.testing.assert_allclose(tr["volume"].item(), 0.0, atol=1e-15)
 
 
-def test_transport_tpoint_missing_scipy_raises() -> None:
-    """ImportError is raised when scipy is unavailable (mocked via patching)."""
-    import builtins
-    import importlib
-
-    real_import = builtins.__import__
-
-    def mock_import(name, *args, **kwargs):
-        if name == "scipy.spatial":
-            raise ImportError("mocked missing scipy")
-        return real_import(name, *args, **kwargs)
-
-    import unittest.mock as mock
-
-    ds = _make_glorys_ds()
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    with mock.patch("builtins.__import__", side_effect=mock_import):
-        # Re-importing the module forces re-evaluation of the import guard
-        import xhycom._transport as _tr
-
-        importlib.reload(_tr)
-        with pytest.raises(ImportError, match="scipy"):
-            _tr.transport_tpoint(
-                ds,
-                t,
-                lat_dim="latitude",
-                lon_dim="longitude",
-                z_dim="depth",
-            )
-    importlib.reload(_tr)  # restore
-
-
-def test_transport_tpoint_output_units_sv() -> None:
+def test_transport_generic_output_units_sv() -> None:
     """Volume output carries units='Sv'."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds()
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     assert tr["volume"].attrs.get("units") == "Sv"
 
 
@@ -766,35 +741,108 @@ def test_section_flux_density_missing_var_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# transport_tpoint — salt/fw and error paths
+# transport (generic path) — salt/fw and error paths
 # ---------------------------------------------------------------------------
 
 
-def test_transport_tpoint_with_salinity() -> None:
-    """transport_tpoint computes salt and fw when salinity ('so') is present."""
+def test_transport_generic_with_salinity() -> None:
+    """transport() computes salt and fw when salinity ('so') is present."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds(sal_val=SAL_VAL)
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     assert "salt" in tr
     assert "fw" in tr
 
 
-def test_transport_tpoint_heat_zero_at_tref() -> None:
-    """transport_tpoint heat transport is zero when temperature equals t_ref."""
+def test_transport_generic_heat_zero_at_tref() -> None:
+    """transport() heat transport is zero when temperature equals t_ref."""
     pytest.importorskip("scipy")
-    from xhycom._transport import _TREF
-
     ds = _make_glorys_ds(temp_val=_TREF)
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
-    tr = transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    tr = transport(ds, r, u_var="uo", v_var="vo", t_var="thetao", z_dim="depth")
     np.testing.assert_allclose(tr["heat"].item(), 0.0, atol=1e-12)
 
 
-def test_transport_tpoint_missing_u_raises() -> None:
-    """transport_tpoint raises ValueError when u_var is absent."""
+def test_transport_generic_missing_u_raises() -> None:
+    """transport() raises ValueError when u_var is absent."""
     pytest.importorskip("scipy")
     ds = _make_glorys_ds().drop_vars("uo")
-    t = Transect(lons=[5.0, 5.0], lats=[44.0, 51.0])
+    r = _resolve_glorys(_make_glorys_ds(), [5.0, 5.0], [44.0, 51.0])
     with pytest.raises(ValueError, match="uo"):
-        transport_tpoint(ds, t, lat_dim="latitude", lon_dim="longitude", z_dim="depth")
+        transport(ds, r, u_var="uo", v_var="vo", z_dim="depth")
+
+
+def test_transport_generic_missing_z_dim_raises() -> None:
+    """transport() raises ValueError when z_dim is omitted for a generic transect."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    r = _resolve_glorys(ds, [5.0, 5.0], [44.0, 51.0])
+    with pytest.raises(ValueError, match="z_dim"):
+        transport(ds, r, u_var="uo", v_var="vo")
+
+
+# ---------------------------------------------------------------------------
+# resolve(lat_var, lon_var) + section_data on generic grids
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_generic_returns_resolved_transect() -> None:
+    """resolve(lat_var, lon_var) returns a ResolvedTransect without face data."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
+    assert isinstance(r, ResolvedTransect)
+    assert not r.has_face_data
+
+
+def test_resolve_generic_y_x_dim_set() -> None:
+    """resolve(lat_var, lon_var) stores correct y_dim and x_dim."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
+    assert r.y_dim == "latitude"
+    assert r.x_dim == "longitude"
+
+
+def test_resolve_generic_missing_lat_var_raises() -> None:
+    """Supplying only lat_var without lon_var raises ValueError."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    with pytest.raises(ValueError, match="both"):
+        t.resolve(ds, lat_var="latitude")
+
+
+def test_section_data_generic_extracts_variables() -> None:
+    """section_data on a generic resolved transect extracts requested variables."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds(temp_val=5.0)
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
+    sec = section_data(ds, r, variables=["thetao"], z_dim="depth")
+    assert "thetao" in sec
+    assert "distance_km" in sec.coords
+
+
+def test_section_data_generic_depth_m_from_z_dim() -> None:
+    """section_data adds 1-D depth_m from z_dim when thknss is absent."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
+    sec = section_data(ds, r, variables=["thetao"], z_dim="depth")
+    assert "depth_m" in sec
+    np.testing.assert_array_equal(sec["depth_m"].values, ds["depth"].values)
+
+
+def test_section_data_generic_no_z_dim_no_depth_m() -> None:
+    """section_data omits depth_m when neither thknss nor z_dim is available."""
+    pytest.importorskip("scipy")
+    ds = _make_glorys_ds()
+    t = Transect(lons=[2.0, 8.0], lats=[46.0, 46.0])
+    r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
+    sec = section_data(ds, r, variables=["thetao"])
+    assert "depth_m" not in sec

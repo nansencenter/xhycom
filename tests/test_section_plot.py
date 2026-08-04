@@ -219,6 +219,42 @@ def test_section_plot_handles_nan_depth() -> None:
     assert ax is not None
 
 
+def test_section_plot_handles_all_nan_depth_column() -> None:
+    """A fully-NaN depth column (all-land) does not raise a pcolormesh error."""
+    ds = _make_section_ds(with_depth=True)
+    depth = ds["depth_m"].values.copy()
+    depth[:, 7] = np.nan  # entire column is land — k=0 is NaN too
+    ds["depth_m"] = (("k", "section"), depth)
+    ax = section_plot(ds, "temp")
+    assert ax is not None
+
+
+def test_section_plot_variable_depth_cells_reach_true_depth() -> None:
+    """2-D depth coordinates place cells at their actual depth, not the layer mean.
+
+    Regression for the boundary-section bug where nanmean over a mostly-shallow
+    section collapsed all layers to ≤100 m, causing deep cells to disappear and
+    the last layer to stretch visually to the plot edge.
+    """
+    nk, ns = 6, 4
+    # Columns 0-2 are shallow (max depth 60 m), column 3 is deep (max depth 600 m).
+    depth_shallow = np.linspace(10.0, 60.0, nk)
+    depth_deep = np.linspace(100.0, 600.0, nk)
+    depth_2d = np.column_stack(
+        [np.tile(depth_shallow[:, None], (1, 3)), depth_deep[:, None]]
+    )  # shape (nk, ns)
+    values = np.ones((nk, ns))
+    ds = xr.Dataset(
+        {"temp": (("k", "section"), values), "depth_m": (("k", "section"), depth_2d)},
+        coords={"distance_km": ("section", np.linspace(0.0, 100.0, ns))},
+    )
+    ax = section_plot(ds, "temp")
+    # The y-axis must reach at least 500 m (true deepest layer centre ~ 600 m).
+    # With the old nanmean approach the axis was capped near the mean (~135 m).
+    ymin, ymax = sorted(ax.get_ylim())
+    assert ymax >= 500.0
+
+
 def test_section_plot_handles_nan_values() -> None:
     """NaN values in the data variable are masked and do not crash."""
     ds = _make_section_ds()
