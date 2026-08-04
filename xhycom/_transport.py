@@ -81,6 +81,7 @@ def transport(
     s_var: str | None = None,
     thknss_var: str = "thknss",
     k_dim: str = "k",
+    z_dim: str | None = None,
     s_ref: float = _SREF,
     t_ref: float = _TREF,
     rho0: float = _RHO0,
@@ -88,35 +89,43 @@ def transport(
     constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
     | None = None,
 ) -> xr.Dataset:
-    """Compute section transports through a HYCOM C-grid transect.
+    """Compute section transports for HYCOM or any regular-grid dataset.
+
+    For HYCOM, pass a transect resolved against the C-grid (face-exact
+    integration).  For other datasets (e.g. GLORYS), resolve the transect
+    with ``lat_var``/``lon_var`` and pass ``z_dim``; transport is then
+    computed via nearest-cell T-point projection.
 
     Parameters
     ----------
     ds:
-        Dataset containing ``u-vel.``, ``v-vel.``, ``thknss``, and optionally
-        ``temp`` / ``salin``.  Velocities must be the **total** current (call
-        :func:`xhycom.postprocess` first if needed).  Thickness must be in
-        metres or Pa (auto-detected from the ``units`` attribute).
+        Dataset containing velocity, thickness / depth, and optionally tracers.
+        For HYCOM: ``u-vel.``, ``v-vel.``, ``thknss``, ``temp``, ``salin``.
+        For generic grids: true east/north velocity components (m s⁻¹) and a
+        1-D depth coordinate.
     transect:
         A :class:`~xhycom.Transect` or a pre-resolved
-        :class:`~xhycom.ResolvedTransect`.  If a bare ``Transect`` is passed,
-        *grid* must also be provided.
+        :class:`~xhycom.ResolvedTransect`.  For generic grids, resolve first
+        with :meth:`~xhycom.Transect.resolve` passing ``lat_var``/``lon_var``.
     grid:
-        Required when *transect* is an unresolved :class:`~xhycom.Transect`.
-        Ignored when *transect* is already a :class:`~xhycom.ResolvedTransect`.
+        Required when *transect* is an unresolved :class:`~xhycom.Transect`
+        being resolved against a HYCOM grid.
     u_var:
-        Name of the eastward (model +i) velocity variable.
+        Eastward velocity variable name (HYCOM default ``"u-vel."``).
     v_var:
-        Name of the northward (model +j) velocity variable.
+        Northward velocity variable name (HYCOM default ``"v-vel."``).
     t_var:
         Temperature variable name.  Heat transport is skipped if absent.
     s_var:
-        Salinity variable name.  Auto-detected (``salin`` then ``saln``) when
-        ``None``.  Salt and FW transport are skipped if absent.
+        Salinity variable name.  Auto-detected from common names when ``None``.
+        Salt and FW transport are skipped if absent.
     thknss_var:
-        Layer-thickness variable name.
+        Layer-thickness variable (HYCOM path only).
     k_dim:
-        Name of the vertical layer dimension.
+        Vertical layer dimension name (HYCOM path only).
+    z_dim:
+        Depth coordinate name for generic grids (e.g. ``"depth"``).  Required
+        when the resolved transect has no HYCOM face data.
     s_ref:
         Freshwater reference salinity in PSU.  Default 34.8.
     t_ref:
@@ -126,61 +135,132 @@ def transport(
     cp:
         Specific heat capacity in J kg⁻¹ K⁻¹.  Default 3996.
     constraints:
-        Optional dict of ``{variable: (operator, threshold)}`` pairs that
-        restrict which face-layer cells contribute to transport.  Operator is
-        one of ``"lt"``, ``"le"``, ``"gt"``, ``"ge"``, ``"eq"``.  Multiple
-        constraints are AND-ed.  Tracer values at each face are the average of
-        the two neighbouring T-cells.
+        Optional ``{variable: (operator, threshold)}`` pairs that zero out
+        contributions where the condition is not met.
 
     Returns
     -------
     xr.Dataset
-        Dataset with a ``time`` dimension (if present in *ds*) and variables:
-
-        * ``volume``  — volume transport in Sv
-        * ``heat``    — heat transport in TW  (only if *t_var* is in *ds*)
-        * ``salt``   — salt transport in kg s⁻¹  (only if salinity found)
-        * ``fw``      — freshwater transport in Sv  (only if salinity found)
-
-        Each variable carries ``long_name`` and ``units`` attributes.
-
-    Raises
-    ------
-    ValueError
-        If *transect* has no face data (i.e. was not resolved with
-        :meth:`~xhycom.Transect.resolve`), or if required variables are absent.
+        Variables ``volume`` (Sv), ``heat`` (TW), ``salt`` (kg s⁻¹), ``fw``
+        (Sv), with a ``time`` dimension when present.
 
     Examples
     --------
-    >>> grid = xhycom.open_dataset("regional.grid")
-    >>> ds   = xhycom.open_mfdataset("data/", grid=grid, postprocess=True,
-    ...            variables=["u-vel.", "v-vel.", "temp", "salin", "thknss"])
-    >>> fs   = xhycom.Transect.named("fram_strait")
-    >>> tr   = xhycom.transport(ds, fs, grid=grid)
-    >>> tr_aw = xhycom.transport(ds, fs, grid=grid,
-    ...             constraints={"temp": ("gt", 2.0)})
+    HYCOM::
+
+        >>> fs  = xhycom.Transect.named("fram_strait")
+        >>> tr  = xhycom.transport(ds, fs, grid=grid)
+
+    GLORYS::
+
+        >>> resolved = fs.resolve(glorys, lat_var="latitude", lon_var="longitude")
+        >>> tr = xhycom.transport(glorys, resolved,
+        ...          u_var="uo", v_var="vo", t_var="thetao", s_var="so",
+        ...          z_dim="depth")
     """
     # ------------------------------------------------------------------
     # Resolve transect if needed
     # ------------------------------------------------------------------
     resolved = _ensure_resolved(transect, grid)
-    if not resolved.has_face_data:
-        raise ValueError(
-            "ResolvedTransect has no face data. Use Transect.resolve(grid) "
-            "to obtain exact C-grid faces before calling transport()."
-        )
 
     # ------------------------------------------------------------------
-    # Validate inputs
+    # Salinity auto-detection (shared by both paths)
+    # ------------------------------------------------------------------
+    if s_var is None:
+        for _name in ("salin", "saln", "so", "salinity", "sal"):
+            if _name in ds:
+                s_var = _name
+                break
+
+    # ------------------------------------------------------------------
+    # Generic T-point path (non-HYCOM resolved transect)
+    # ------------------------------------------------------------------
+    if not resolved.has_face_data:
+        if z_dim is None:
+            raise ValueError(
+                "z_dim is required when transect was resolved against a "
+                "non-HYCOM grid.  Pass z_dim=<depth coordinate name>."
+            )
+        for var in (u_var, v_var):
+            if var not in ds:
+                raise ValueError(f"Required variable {var!r} not found in dataset.")
+        if constraints:
+            for cvar, (op, _) in constraints.items():
+                if cvar not in ds:
+                    raise ValueError(f"Constraint variable {cvar!r} not found.")
+                if op not in _OPS:
+                    raise ValueError(f"Unknown operator {op!r}. Use: {sorted(_OPS)}")
+
+        j_da = xr.DataArray(resolved.j, dims="section")
+        i_da = xr.DataArray(resolved.i, dims="section")
+        sel = {resolved.y_dim: j_da, resolved.x_dim: i_da}
+
+        theta = np.radians(resolved.bearing_deg)
+        cos_t = xr.DataArray(np.cos(theta), dims="section")
+        sin_t = xr.DataArray(np.sin(theta), dims="section")
+        w = xr.DataArray(resolved.cell_width_km * 1e3, dims="section")
+
+        u = ds[u_var].isel(**sel)
+        v = ds[v_var].isel(**sel)
+        v_normal = u * cos_t - v * sin_t  # positive = rightward
+
+        z_vals = ds[z_dim].values.astype(float)
+        z_edges = np.empty(len(z_vals) + 1)
+        z_edges[1:-1] = (z_vals[:-1] + z_vals[1:]) / 2.0
+        z_edges[0] = z_vals[0] - (z_vals[1] - z_vals[0]) / 2.0
+        z_edges[-1] = z_vals[-1] + (z_vals[-1] - z_vals[-2]) / 2.0
+        dz = xr.DataArray(np.diff(z_edges), dims=z_dim)
+
+        if constraints:
+            cmask: xr.DataArray | None = None
+            for cvar, (op, threshold) in constraints.items():
+                val = ds[cvar].isel(**sel)
+                cond: xr.DataArray = {
+                    "lt": val < threshold,
+                    "le": val <= threshold,
+                    "gt": val > threshold,
+                    "ge": val >= threshold,
+                    "eq": val == threshold,
+                }[op]
+                cmask = cond if cmask is None else (cmask & cond)
+            v_normal = v_normal.where(cmask, 0.0)
+
+        def _tp_integrate(da: xr.DataArray) -> xr.DataArray:
+            return (da * dz * w).sum(dim=[z_dim, "section"])
+
+        compute_heat = t_var in ds
+        compute_salt = s_var is not None and s_var in ds
+        out_vars: dict[str, xr.DataArray] = {}
+        out_vars["volume"] = _attach_attrs(
+            _tp_integrate(v_normal) * 1e-6, "volume transport", "Sv"
+        )
+        if compute_heat:
+            t = ds[t_var].isel(**sel)
+            out_vars["heat"] = _attach_attrs(
+                _tp_integrate((t - t_ref) * v_normal) * rho0 * cp * 1e-12,
+                "heat transport",
+                "TW",
+            )
+        if compute_salt:
+            s = ds[s_var].isel(**sel)
+            out_vars["salt"] = _attach_attrs(
+                _tp_integrate(s * v_normal) * rho0 / 1000.0, "salt transport", "kg s-1"
+            )
+            out_vars["fw"] = _attach_attrs(
+                _tp_integrate((s_ref - s) / s_ref * v_normal) * 1e-6,
+                "freshwater transport",
+                "Sv",
+            )
+        return xr.Dataset(out_vars)
+
+    # ------------------------------------------------------------------
+    # HYCOM C-grid path
     # ------------------------------------------------------------------
     for var in (u_var, v_var, thknss_var):
         if var not in ds:
             raise ValueError(f"Required variable {var!r} not found in dataset.")
 
     _check_velocity_complete(ds, u_var, v_var)
-
-    if s_var is None:
-        s_var = "salin" if "salin" in ds else ("saln" if "saln" in ds else None)
 
     compute_heat = t_var in ds
     compute_salt = s_var is not None and s_var in ds
@@ -500,59 +580,69 @@ def section_data(
     variables: list[str] | None = None,
     thknss_var: str = "thknss",
     k_dim: str = "k",
+    z_dim: str | None = None,
 ) -> xr.Dataset:
     """Extract hydrographic data along the section T-cell path.
 
-    Selects every variable with ``(y, x)`` dimensions from *ds* at the T-cell
-    positions identified by :meth:`~xhycom.Transect.resolve`, producing a
-    ``(section, k)`` Dataset suitable for cross-section plots.  A
-    ``distance_km`` coordinate is attached along the ``section`` dimension,
-    and ``depth_m`` (depth of each layer centre from the sea surface) is added
-    when *thknss_var* is present.
+    Selects every variable with the section's spatial dimensions from *ds* at
+    the T-cell positions identified by :meth:`~xhycom.Transect.resolve`,
+    producing a ``(k, section)`` Dataset suitable for cross-section plots.  A
+    ``distance_km`` coordinate is attached along the ``section`` dimension, and
+    ``depth_m`` is added from layer thickness (HYCOM) or the *z_dim* coordinate
+    (z-level grids such as GLORYS).
 
     Parameters
     ----------
     ds:
-        HYCOM Dataset (archive or multi-file) containing the fields to extract.
+        Dataset containing the fields to extract (HYCOM or any regular grid).
     transect:
         A :class:`~xhycom.Transect` or pre-resolved
         :class:`~xhycom.ResolvedTransect`.
     grid:
-        Required when *transect* is an unresolved :class:`~xhycom.Transect`.
+        Required when *transect* is an unresolved :class:`~xhycom.Transect`
+        and no *lat_var*/*lon_var* were passed to :meth:`~xhycom.Transect.resolve`.
     variables:
-        Explicit list of variable names to extract.  When ``None`` every
-        variable with ``y`` and ``x`` dimensions is included.
+        Explicit list of variable names to extract.  When ``None``, every
+        variable whose dimensions include the section's spatial axes is used.
     thknss_var:
-        Layer-thickness variable used to derive ``depth_m``.
+        Layer-thickness variable used to derive ``depth_m`` for HYCOM datasets.
     k_dim:
-        Name of the vertical layer dimension.
+        Name of the vertical layer dimension (HYCOM).
+    z_dim:
+        Name of the depth coordinate for z-level datasets (e.g. ``"depth"``
+        for GLORYS).  Used as ``depth_m`` when *thknss_var* is absent.
 
     Returns
     -------
     xr.Dataset
-        Dataset with dimensions ``section`` (and ``k`` / ``time`` when
-        present) and coordinate ``distance_km`` along the section.
-        ``depth_m`` is included as a data variable when *thknss_var* is
-        present in *ds*.
+        Dataset with dimensions ``section`` (and a vertical / ``time``
+        dimension when present) and coordinate ``distance_km``.  ``depth_m``
+        is included as a data variable when depth information is available.
 
     Examples
     --------
     >>> resolved = xhycom.Transect.named("fram_strait").resolve(grid)
     >>> sec = xhycom.section_data(ds, resolved)
     >>> sec["temp"].plot(x="distance_km", y="depth_m")
+
+    >>> resolved_g = southern.resolve(glorys, lat_var="latitude", lon_var="longitude")
+    >>> sec_g = xhycom.section_data(glorys, resolved_g, z_dim="depth")
+    >>> xhycom.section_plot(sec_g, "thetao", flip_x=True, depth_max=3000)
     """
     resolved = _ensure_resolved(transect, grid)
 
+    y_dim = resolved.y_dim
+    x_dim = resolved.x_dim
     j = xr.DataArray(resolved.j, dims="section")
     i = xr.DataArray(resolved.i, dims="section")
 
     sel_vars = (
         variables
         if variables is not None
-        else [v for v in ds.data_vars if "y" in ds[v].dims and "x" in ds[v].dims]
+        else [v for v in ds.data_vars if y_dim in ds[v].dims and x_dim in ds[v].dims]
     )
 
-    out = xr.Dataset({v: ds[v].isel(y=j, x=i) for v in sel_vars if v in ds})
+    out = xr.Dataset({v: ds[v].isel({y_dim: j, x_dim: i}) for v in sel_vars if v in ds})
     out = out.assign_coords(distance_km=("section", resolved.distance_km))
     out["distance_km"].attrs = {
         "long_name": "distance along section",
@@ -560,11 +650,15 @@ def section_data(
     }
 
     if thknss_var in ds:
-        thk = ds[thknss_var].isel(y=j, x=i)
+        thk = ds[thknss_var].isel({y_dim: j, x_dim: i})
         if thk.attrs.get("units") != "m":
             thk = thk / _ONEM
         depth_m = thk.cumsum(dim=k_dim) - thk / 2.0
         depth_m.attrs = {"long_name": "depth of layer centre", "units": "m"}
+        out["depth_m"] = depth_m
+    elif z_dim is not None and z_dim in ds.coords:
+        depth_m = ds[z_dim].astype(float)
+        depth_m.attrs = {"long_name": "depth", "units": "m"}
         out["depth_m"] = depth_m
 
     return out
@@ -763,268 +857,3 @@ def section_flux_density(
     out["distance_km"].attrs = {"long_name": "distance along section", "units": "km"}
     out["face_width_m"].attrs = {"long_name": "face width", "units": "m"}
     return out
-
-
-# ---------------------------------------------------------------------------
-# Regular-grid transport
-# ---------------------------------------------------------------------------
-
-
-def transport_tpoint(
-    ds: xr.Dataset,
-    transect: Transect,
-    *,
-    u_var: str = "uo",
-    v_var: str = "vo",
-    t_var: str = "thetao",
-    s_var: str | None = None,
-    lat_dim: str = "latitude",
-    lon_dim: str = "longitude",
-    z_dim: str = "depth",
-    s_ref: float = _SREF,
-    t_ref: float = _TREF,
-    rho0: float = _RHO0,
-    cp: float = _CP,
-    constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
-    | None = None,
-) -> xr.Dataset:
-    """Compute section transports for a regular or rectilinear grid dataset.
-
-    Suitable for non-HYCOM products such as GLORYS, EN4 or observations that
-    carry eastward/northward velocity components on a latitude–longitude grid.
-    The section is sampled by finding the nearest grid cell to each point on
-    the transect polyline; velocities are then projected onto the
-    section-normal direction and integrated over depth and along-section width.
-
-    Sign convention matches :func:`transport`: positive = rightward when
-    walking from the first transect waypoint to the last.
-
-    Parameters
-    ----------
-    ds:
-        Dataset with ``u_var``, ``v_var`` and a depth coordinate ``z_dim``.
-        Velocities must be in true east/north geographic components (m s⁻¹).
-    transect:
-        An unresolved :class:`~xhycom.Transect` (grid-independent geometry).
-    u_var:
-        Eastward velocity variable name.  Default ``"uo"`` (GLORYS convention).
-    v_var:
-        Northward velocity variable name.  Default ``"vo"``.
-    t_var:
-        Temperature variable.  Heat transport is skipped if absent.
-        Default ``"thetao"`` (GLORYS convention).
-    s_var:
-        Salinity variable.  Auto-detected from common names when ``None``.
-    lat_dim:
-        Name of the latitude dimension in *ds*.
-    lon_dim:
-        Name of the longitude dimension in *ds*.
-    z_dim:
-        Name of the depth dimension in *ds*.  Layer thicknesses are derived
-        from finite differences of the coordinate values.
-    s_ref:
-        Freshwater reference salinity [PSU].  Default 34.8.
-    t_ref:
-        Heat-transport reference temperature [°C].  Default 0.0.
-    rho0:
-        Reference density [kg m⁻³].  Default 1025.
-    cp:
-        Specific heat [J kg⁻¹ K⁻¹].  Default 3996.
-    constraints:
-        Optional ``{variable: (operator, threshold)}`` pairs that zero out
-        contributions where the condition is not met (same syntax as
-        :func:`transport`).
-
-    Returns
-    -------
-    xr.Dataset
-        Same structure as :func:`transport`: ``volume``, ``heat``
-        (when *t_var* found), ``salt`` and ``fw`` (when salinity
-        found), optionally with a ``time`` dimension.
-
-    Raises
-    ------
-    ImportError
-        If ``scipy`` is not installed.
-    ValueError
-        If required variables are absent or the section misses the grid.
-
-    Examples
-    --------
-    >>> glorys = xr.open_dataset("glorys.nc")
-    >>> fs = xhycom.Transect.named("fram_strait")
-    >>> tr_g = xhycom.transport_tpoint(glorys, fs, lat_dim="latitude",
-    ...                                 lon_dim="longitude", z_dim="depth")
-    """
-    try:
-        from scipy.spatial import KDTree
-    except ImportError as exc:
-        raise ImportError(
-            "scipy is required for transport_tpoint.\n"
-            "Install it with: pip install scipy"
-        ) from exc
-
-    for var in (u_var, v_var):
-        if var not in ds:
-            raise ValueError(f"Required variable {var!r} not found in dataset.")
-
-    if s_var is None:
-        for name in ("so", "salin", "saln", "salinity", "sal"):
-            if name in ds:
-                s_var = name
-                break
-
-    compute_heat = t_var in ds
-    compute_salt = s_var is not None and s_var in ds
-
-    if constraints:
-        for cvar, (op, _) in constraints.items():
-            if cvar not in ds:
-                raise ValueError(f"Constraint variable {cvar!r} not found.")
-            if op not in _OPS:
-                raise ValueError(f"Unknown operator {op!r}. Use: {sorted(_OPS)}")
-
-    # ------------------------------------------------------------------
-    # Build KDTree from the dataset's lat/lon coordinates
-    # ------------------------------------------------------------------
-    from ._transect import (
-        _cell_widths_km,
-        _cumulative_distance_km,
-        _sample_polyline,
-        _section_bearings,
-        _to_xyz,
-    )
-
-    lat_vals = ds[lat_dim].values  # 1-D (ny,) or 2-D (ny, nx)
-    lon_vals = ds[lon_dim].values
-
-    if lat_vals.ndim == 1 and lon_vals.ndim == 1:
-        lon2d, lat2d = np.meshgrid(lon_vals, lat_vals)
-    elif lat_vals.ndim == 2 and lon_vals.ndim == 2:
-        lon2d, lat2d = lon_vals, lat_vals
-    else:
-        raise ValueError(
-            f"lat_dim {lat_dim!r} and lon_dim {lon_dim!r} must both be 1-D "
-            "(rectilinear) or both 2-D (curvilinear)."
-        )
-
-    ny, nx = lon2d.shape
-    tree = KDTree(_to_xyz(lon2d.ravel(), lat2d.ravel()))
-
-    # ------------------------------------------------------------------
-    # Section cells on this grid
-    # ------------------------------------------------------------------
-    slons, slats = _sample_polyline(transect.lons, transect.lats)
-    _, flat_idx = tree.query(_to_xyz(slons, slats))
-    j_samp = (flat_idx // nx).astype(np.intp)
-    i_samp = (flat_idx % nx).astype(np.intp)
-
-    pairs = np.column_stack([j_samp, i_samp])
-    keep = np.concatenate([[True], np.any(pairs[1:] != pairs[:-1], axis=1)])
-    j_cells = j_samp[keep]
-    i_cells = i_samp[keep]
-
-    if len(j_cells) < 2:
-        raise ValueError(
-            "Transect intersects fewer than 2 grid cells in the dataset. "
-            "Check that the waypoints lie within the dataset domain."
-        )
-
-    cell_lons = lon2d[j_cells, i_cells]
-    cell_lats = lat2d[j_cells, i_cells]
-    widths_m = _cell_widths_km(_cumulative_distance_km(cell_lons, cell_lats)) * 1e3
-    bearings = _section_bearings(cell_lons, cell_lats)
-
-    # Section-normal direction (rightward): n = (cos θ, -sin θ) in (E, N).
-    theta = np.radians(bearings)
-    cos_t = xr.DataArray(np.cos(theta), dims="section")
-    sin_t = xr.DataArray(np.sin(theta), dims="section")
-    w = xr.DataArray(widths_m, dims="section")
-
-    # ------------------------------------------------------------------
-    # Index into dataset (handles 1-D or 2-D lat/lon)
-    # ------------------------------------------------------------------
-    if lat_vals.ndim == 1:
-        lat_idx = xr.DataArray(j_cells, dims="section")
-        lon_idx = xr.DataArray(i_cells, dims="section")
-        sel = {lat_dim: lat_idx, lon_dim: lon_idx}
-    else:
-        # For 2-D coordinates, use a flat index broadcast to the 2-D grid
-        # by wrapping j, i into multi-dim indexing via DataArrays
-        lat_idx = xr.DataArray(j_cells, dims="section")
-        lon_idx = xr.DataArray(i_cells, dims="section")
-        # Both dims of the 2-D array share the same dim names; use vectorised
-        # indexing: pass both as DataArrays with matching "section" dim so
-        # xarray aligns them.
-        dim_y, dim_x = ds[u_var].dims[-2], ds[u_var].dims[-1]
-        sel = {dim_y: lat_idx, dim_x: lon_idx}
-
-    u = ds[u_var].isel(**sel)  # (..., z, section)
-    v = ds[v_var].isel(**sel)
-
-    v_normal = u * cos_t - v * sin_t  # positive = rightward
-
-    # ------------------------------------------------------------------
-    # Layer thicknesses from the depth coordinate
-    # ------------------------------------------------------------------
-    z_vals = ds[z_dim].values.astype(float)
-    z_edges = np.empty(len(z_vals) + 1)
-    z_edges[1:-1] = (z_vals[:-1] + z_vals[1:]) / 2.0
-    z_edges[0] = z_vals[0] - (z_vals[1] - z_vals[0]) / 2.0
-    z_edges[-1] = z_vals[-1] + (z_vals[-1] - z_vals[-2]) / 2.0
-    dz = xr.DataArray(np.diff(z_edges), dims=z_dim)
-
-    # ------------------------------------------------------------------
-    # Integrate
-    # ------------------------------------------------------------------
-    def _integrate(da: xr.DataArray) -> xr.DataArray:
-        return (da * dz * w).sum(dim=[z_dim, "section"])
-
-    def _tpoint_constraint_mask(
-        t1j: xr.DataArray, t1i: xr.DataArray
-    ) -> xr.DataArray | None:
-        if not constraints:
-            return None
-        mask: xr.DataArray | None = None
-        for cvar, (op, threshold) in constraints.items():
-            val = ds[cvar].isel(
-                **{
-                    (lat_dim if lat_vals.ndim == 1 else ds[cvar].dims[-2]): t1j,
-                    (lon_dim if lat_vals.ndim == 1 else ds[cvar].dims[-1]): t1i,
-                }
-            )
-            cond: xr.DataArray = {
-                "lt": val < threshold,
-                "le": val <= threshold,
-                "gt": val > threshold,
-                "ge": val >= threshold,
-                "eq": val == threshold,
-            }[op]
-            mask = cond if mask is None else (mask & cond)
-        return mask
-
-    cmask = _tpoint_constraint_mask(
-        xr.DataArray(j_cells, dims="section"),
-        xr.DataArray(i_cells, dims="section"),
-    )
-
-    vn_masked = v_normal if cmask is None else v_normal.where(cmask, 0.0)
-
-    out_vars: dict[str, xr.DataArray] = {}
-
-    vol = _integrate(vn_masked)
-    out_vars["volume"] = _attach_attrs(vol * 1e-6, "volume transport", "Sv")
-
-    if compute_heat:
-        t = ds[t_var].isel(**sel)
-        heat = _integrate((t - t_ref) * vn_masked) * rho0 * cp
-        out_vars["heat"] = _attach_attrs(heat * 1e-12, "heat transport", "TW")
-
-    if compute_salt:
-        s = ds[s_var].isel(**sel)
-        salt = _integrate(s * vn_masked) * rho0 / 1000.0
-        out_vars["salt"] = _attach_attrs(salt, "salt transport", "kg s-1")
-        fw = _integrate((s_ref - s) / s_ref * vn_masked)
-        out_vars["fw"] = _attach_attrs(fw * 1e-6, "freshwater transport", "Sv")
-
-    return xr.Dataset(out_vars)

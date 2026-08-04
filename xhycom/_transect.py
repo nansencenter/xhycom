@@ -51,6 +51,8 @@ _NAMED_SECTIONS: dict[str, tuple[list[float], list[float]]] = {
     "svinoy": ([5.5, -7.0], [62.0, 62.3]),
     "gimsoy": ([5.0, 16.2], [70.5, 68.7]),
     "fsc": ([-1.4, -7.0], [60.2, 62.3]),
+    "barents_kara_northern_boundary": ([108.5, 99.5, 15.0], [76.0, 79.0, 79.0]),
+    "davis_strait": ([-53.0, -63.0], [67.0, 66.5]),
 }
 
 # Face-type sentinel values stored in ResolvedTransect.face_type
@@ -238,6 +240,10 @@ class ResolvedTransect:
     distance_km: np.ndarray
     cell_width_km: np.ndarray
     bearing_deg: np.ndarray
+    # Spatial dimension names used to index into the source dataset.
+    # Defaults match the HYCOM convention; overridden for generic grids.
+    y_dim: str = field(default="y")
+    x_dim: str = field(default="x")
     # HYCOM C-grid face data; None when not resolved via resolve()
     face_type: np.ndarray | None = field(default=None)
     face_j: np.ndarray | None = field(default=None)
@@ -755,32 +761,48 @@ class Transect:
     # Resolution
     # ------------------------------------------------------------------
 
-    def resolve(self, grid: xr.Dataset | str) -> ResolvedTransect:
-        """Resolve the section against a HYCOM curvilinear grid.
+    def resolve(
+        self,
+        grid: xr.Dataset | str,
+        *,
+        lat_var: str | None = None,
+        lon_var: str | None = None,
+    ) -> ResolvedTransect:
+        """Resolve the section against a model grid.
 
-        Finds the ordered T-cells the polyline passes through via a 3-D KDTree
-        on the T-point coordinates, then determines the exact U- and V-faces
-        crossed between consecutive T-cells.
+        By default resolves against a HYCOM curvilinear grid, finding the
+        ordered T-cells the polyline passes through via a 3-D KDTree and
+        determining the exact U- and V-faces crossed.  Pass *lat_var* and
+        *lon_var* to resolve against any rectilinear or curvilinear dataset
+        (e.g. GLORYS); in this mode face data is not populated (so
+        :func:`~xhycom.section_flux_density` is unavailable, but
+        :func:`~xhycom.section_data` works as normal).
 
         Parameters
         ----------
         grid:
-            A Dataset as returned by ``xhycom.open_dataset("regional.grid")``
-            (must contain ``plon``, ``plat``, ``scuy``, ``scvx``), or a path
-            to ``regional.grid``.
+            HYCOM mode: a Dataset from ``xhycom.open_dataset("regional.grid")``
+            (must contain ``plon``, ``plat``, ``scuy``, ``scvx``), or a path.
+            Generic mode: any Dataset that contains *lat_var* and *lon_var*.
+        lat_var:
+            Name of the latitude coordinate/variable in *grid*.  When given,
+            *lon_var* must also be given and generic mode is used.
+        lon_var:
+            Name of the longitude coordinate/variable in *grid*.
 
         Returns
         -------
         ResolvedTransect
-            T-cell path, face data, distances, widths, and local bearings.
+            T-cell path, distances, widths, and local bearings.  Face data is
+            only populated in HYCOM mode.
 
         Raises
         ------
         ImportError
             If ``scipy`` is not installed.
         ValueError
-            If ``grid`` lacks the required variables, or if the section does
-            not intersect at least two T-cells in the domain.
+            If required variables are absent or fewer than two T-cells are
+            found.
         """
         try:
             from scipy.spatial import KDTree
@@ -791,11 +813,81 @@ class Transect:
             ) from exc
 
         grid = _load_grid(grid)
+
+        # ------------------------------------------------------------------
+        # Generic (non-HYCOM) path
+        # ------------------------------------------------------------------
+        if lat_var is not None or lon_var is not None:
+            if lat_var is None or lon_var is None:
+                raise ValueError("lat_var and lon_var must both be supplied together.")
+            for var in (lat_var, lon_var):
+                if var not in grid and var not in grid.coords:
+                    raise ValueError(f"Grid is missing {var!r}. Check lat_var/lon_var.")
+
+            lat_vals = grid[lat_var].values
+            lon_vals = grid[lon_var].values
+
+            if lat_vals.ndim == 1 and lon_vals.ndim == 1:
+                lon2d, lat2d = np.meshgrid(lon_vals, lat_vals)
+                y_dim, x_dim = lat_var, lon_var
+            elif lat_vals.ndim == 2 and lon_vals.ndim == 2:
+                lat2d, lon2d = lat_vals, lon_vals
+                y_dim = grid[lat_var].dims[0]
+                x_dim = grid[lat_var].dims[1]
+            else:
+                raise ValueError(
+                    f"{lat_var!r} and {lon_var!r} must both be 1-D or both 2-D."
+                )
+
+            ny, nx = lon2d.shape
+            tree = KDTree(_to_xyz(lon2d.ravel(), lat2d.ravel()))
+            slons, slats = _sample_polyline(self.lons, self.lats)
+            _, flat_idx = tree.query(_to_xyz(slons, slats))
+            j_samp = (flat_idx // nx).astype(np.intp)
+            i_samp = (flat_idx % nx).astype(np.intp)
+
+            pairs = np.column_stack([j_samp, i_samp])
+            keep = np.concatenate([[True], np.any(pairs[1:] != pairs[:-1], axis=1)])
+            j_cells = j_samp[keep]
+            i_cells = i_samp[keep]
+
+            if len(j_cells) < 2:
+                raise ValueError(
+                    "Transect intersects fewer than 2 T-cells — verify that "
+                    "the waypoints lie within the dataset domain."
+                )
+
+            j_cells, i_cells = _break_diagonals(j_cells, i_cells)
+
+            cell_lons = lon2d[j_cells, i_cells]
+            cell_lats = lat2d[j_cells, i_cells]
+            dist_km = _cumulative_distance_km(cell_lons, cell_lats)
+            widths_km = _cell_widths_km(dist_km)
+            bearings = _section_bearings(cell_lons, cell_lats)
+
+            return ResolvedTransect(
+                transect=self,
+                j=j_cells,
+                i=i_cells,
+                cell_lon=cell_lons,
+                cell_lat=cell_lats,
+                distance_km=dist_km,
+                cell_width_km=widths_km,
+                bearing_deg=bearings,
+                y_dim=y_dim,
+                x_dim=x_dim,
+                # Face data not available for generic grids
+            )
+
+        # ------------------------------------------------------------------
+        # HYCOM path
+        # ------------------------------------------------------------------
         for var in ("plon", "plat", "scuy", "scvx"):
             if var not in grid:
                 raise ValueError(
                     f"grid is missing {var!r}. Pass a Dataset from "
-                    "xhycom.open_dataset('regional.grid')."
+                    "xhycom.open_dataset('regional.grid'), or supply "
+                    "lat_var and lon_var for a non-HYCOM grid."
                 )
 
         plon: np.ndarray = grid["plon"].values  # (jdm, idm)
