@@ -7,6 +7,7 @@ section with distance along the section on the x-axis and depth on the y-axis.
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -127,24 +128,36 @@ def section_plot(
     n_k, n_s = values.shape
 
     # ------------------------------------------------------------------
-    # Depth axis (may be 1-D for z-level or 2-D for isopycnal/hybrid)
+    # Depth / distance arrays for pcolormesh
     # ------------------------------------------------------------------
-    # Use a 1-D representative depth profile so that pcolormesh receives
-    # monotonic coordinate arrays — avoids the "not monotonically
-    # increasing" warning and produces correct cell-edge computation.
+    # For hybrid/isopycnal grids the depth array is 2-D (k × section).
+    # Pass it directly to pcolormesh with a matching 2-D distance array so
+    # each cell appears at its true depth rather than a per-layer mean.
+    # Sub-seafloor cells have NaN depth coordinates; forward-fill along k
+    # so the mesh is always valid — those cells are masked by their NaN
+    # data values anyway.
     if depth_da is not None:
         depth_raw = depth_da.values.astype(float)
         if depth_raw.ndim == 1:
-            depth_1d = depth_raw
+            depth_plot: np.ndarray = depth_raw  # (k,)
+            dist_plot: np.ndarray = dist  # (n_s,)
         else:
-            # Hybrid/isopycnal: mean depth of each layer across the section,
-            # ignoring sub-bathymetry NaN cells.
-            depth_1d = np.nanmean(depth_raw, axis=1)
-            all_nan = ~np.isfinite(depth_1d)
-            if np.any(all_nan):
-                depth_1d[all_nan] = np.arange(n_k, dtype=float)[all_nan]
+            depth_plot = depth_raw.copy()  # (k, n_s)
+            # Forward-fill: propagate last valid depth downward (sub-seafloor).
+            for k in range(1, n_k):
+                nan_col = ~np.isfinite(depth_plot[k])
+                depth_plot[k, nan_col] = depth_plot[k - 1, nan_col]
+            # Backward-fill: cover columns whose k=0 is already NaN (all-land).
+            for k in range(n_k - 2, -1, -1):
+                nan_col = ~np.isfinite(depth_plot[k])
+                depth_plot[k, nan_col] = depth_plot[k + 1, nan_col]
+            # Final fallback for fully-NaN columns (shouldn't occur, but keeps
+            # pcolormesh happy — those cells are masked by their NaN data).
+            depth_plot = np.where(np.isfinite(depth_plot), depth_plot, 0.0)
+            dist_plot = np.broadcast_to(dist[np.newaxis, :], depth_plot.shape).copy()
     else:
-        depth_1d = np.arange(n_k, dtype=float)
+        depth_plot = np.arange(n_k, dtype=float)  # (k,)
+        dist_plot = dist  # (n_s,)
 
     # ------------------------------------------------------------------
     # Colormap and normalisation
@@ -170,14 +183,22 @@ def section_plot(
     if ax is None:
         _, ax = plt.subplots(figsize=(12, 5))
 
-    pc = ax.pcolormesh(
-        dist,
-        depth_1d,
-        np.ma.masked_invalid(values),
-        cmap=cmap,
-        shading="nearest",
-        **kwargs,
-    )
+    # Non-monotone depth coordinates only occur in fully-masked (land/sub-seafloor)
+    # cells, so the warning is not actionable.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="The input coordinates to pcolormesh are interpreted as cell centers",
+            category=UserWarning,
+        )
+        pc = ax.pcolormesh(
+            dist_plot,
+            depth_plot,
+            np.ma.masked_invalid(values),
+            cmap=cmap,
+            shading="nearest",
+            **kwargs,
+        )
 
     ax.set_xlabel("Distance along section (km)")
     ax.set_ylabel("Depth (m)")
