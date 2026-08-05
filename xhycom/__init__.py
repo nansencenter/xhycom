@@ -35,6 +35,7 @@ from ._regrid import (
 from ._section import section_plot
 from ._transect import ResolvedTransect, Transect
 from ._transport import (
+    boundary_transport,
     section_data,
     section_flux_density,
     transport,
@@ -48,6 +49,7 @@ __version__ = "0.1.0"
 __all__ = [
     "ResolvedTransect",
     "Transect",
+    "boundary_transport",
     "open_dataset",
     "open_mfdataset",
     "postprocess",
