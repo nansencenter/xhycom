@@ -58,6 +58,16 @@ import xarray as xr
 
 from ._transect import ResolvedTransect, Transect, _load_grid
 
+# ---------------------------------------------------------------------------
+# NOTE on boundary-row transport
+# ---------------------------------------------------------------------------
+# ``Transect.from_boundary_row`` creates waypoints along the boundary at
+# constant j, then ``resolve(grid)`` walks west→east, producing U-faces
+# (east-west velocity).  For a south/north boundary we want V-faces
+# (cross-boundary velocity).  Use ``boundary_transport()`` instead of
+# ``transport()`` for boundary rows.
+# ---------------------------------------------------------------------------
+
 # Pa per metre of water column: rho0 * g = 1000 * 9.806 (HYCOM's ``onem``)
 _ONEM: float = 9806.0
 
@@ -191,17 +201,27 @@ def transport(
                 if op not in _OPS:
                     raise ValueError(f"Unknown operator {op!r}. Use: {sorted(_OPS)}")
 
-        j_da = xr.DataArray(resolved.j, dims="section")
-        i_da = xr.DataArray(resolved.i, dims="section")
-        sel = {resolved.y_dim: j_da, resolved.x_dim: i_da}
+        # For regular (1-D coordinate) grids use coordinate-value selection so the
+        # result is correct even when ds is a spatial subset of the grid that was
+        # originally passed to resolve() (e.g. HYCOM regridded to a clipped GLORYS).
+        if resolved.y_dim in ds.coords and ds[resolved.y_dim].ndim == 1:
+            _lat_idx = xr.DataArray(resolved.cell_lat, dims="section")
+            _lon_idx = xr.DataArray(resolved.cell_lon, dims="section")
+            sel = {resolved.y_dim: _lat_idx, resolved.x_dim: _lon_idx}
+            _sel_kw: dict = {"method": "nearest"}
+        else:
+            j_da = xr.DataArray(resolved.j, dims="section")
+            i_da = xr.DataArray(resolved.i, dims="section")
+            sel = {resolved.y_dim: j_da, resolved.x_dim: i_da}
+            _sel_kw = {}
 
         theta = np.radians(resolved.bearing_deg)
         cos_t = xr.DataArray(np.cos(theta), dims="section")
         sin_t = xr.DataArray(np.sin(theta), dims="section")
         w = xr.DataArray(resolved.cell_width_km * 1e3, dims="section")
 
-        u = ds[u_var].isel(**sel)
-        v = ds[v_var].isel(**sel)
+        u = ds[u_var].sel(**sel, **_sel_kw)
+        v = ds[v_var].sel(**sel, **_sel_kw)
         v_normal = u * cos_t - v * sin_t  # positive = rightward
 
         z_vals = ds[z_dim].values.astype(float)
@@ -214,7 +234,7 @@ def transport(
         if constraints:
             cmask: xr.DataArray | None = None
             for cvar, (op, threshold) in constraints.items():
-                val = ds[cvar].isel(**sel)
+                val = ds[cvar].sel(**sel, **_sel_kw)
                 cond: xr.DataArray = {
                     "lt": val < threshold,
                     "le": val <= threshold,
@@ -235,14 +255,14 @@ def transport(
             _tp_integrate(v_normal) * 1e-6, "volume transport", "Sv"
         )
         if compute_heat:
-            t = ds[t_var].isel(**sel)
+            t = ds[t_var].sel(**sel, **_sel_kw)
             out_vars["heat"] = _attach_attrs(
                 _tp_integrate((t - t_ref) * v_normal) * rho0 * cp * 1e-12,
                 "heat transport",
                 "TW",
             )
         if compute_salt:
-            s = ds[s_var].isel(**sel)
+            s = ds[s_var].sel(**sel, **_sel_kw)
             out_vars["salt"] = _attach_attrs(
                 _tp_integrate(s * v_normal) * rho0 / 1000.0, "salt transport", "kg s-1"
             )
@@ -568,6 +588,139 @@ def _attach_attrs(da: xr.DataArray, long_name: str, units: str) -> xr.DataArray:
 
 
 # ---------------------------------------------------------------------------
+# Boundary-row transport (V-face integration)
+# ---------------------------------------------------------------------------
+
+
+def boundary_transport(
+    ds: xr.Dataset,
+    grid: xr.Dataset | str,
+    bathy: xr.Dataset | str,
+    j: int,
+    *,
+    sign: float = 1.0,
+    t_var: str = "temp",
+    s_var: str | None = None,
+    thknss_var: str = "thknss",
+    k_dim: str = "k",
+    s_ref: float = _SREF,
+    t_ref: float = _TREF,
+    rho0: float = _RHO0,
+    cp: float = _CP,
+) -> xr.Dataset:
+    """Transport through a domain open boundary via direct V-face integration.
+
+    .. note::
+        The preferred workflow is now::
+
+            rt = xhycom.ResolvedTransect.from_vface_row(grid, bathy, j=1, sign=+1)
+            tr = xhycom.transport(ds, rt)
+
+        :meth:`~xhycom.ResolvedTransect.from_vface_row` builds the V-face
+        transect once and reuses it across many datasets; this function is a
+        convenience shortcut that constructs the face geometry on every call.
+
+    Do **not** use the standard transect workflow
+    (``Transect.from_boundary_row`` → ``resolve`` → ``transport``) for boundary
+    rows.  That path walks along the boundary at constant *j*, picking up
+    **U-faces** (east-west velocity) — the wrong component for a south/north
+    boundary.  This function integrates ``v-vel.`` at V-face row *j* directly,
+    which carries the actual cross-boundary flux.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        HYCOM dataset with ``v-vel.``, ``thknss``, and optionally ``temp`` and
+        salinity.  Apply :func:`postprocess` (or open with ``postprocess=True``)
+        so that ``thknss`` is in metres and ``v-vel.`` is the total velocity.
+    grid : xr.Dataset or str
+        HYCOM grid dataset or path to ``regional.grid``.  Must contain ``scvx``
+        (V-face width in the x-direction).
+    bathy : xr.Dataset or str
+        Bathymetry dataset from ``xhycom.open_dataset(bathy_path, grid=...)``.
+        Used to identify wet columns.
+    j : int
+        V-face row index.  ``v-vel.[y=j, x=i]`` is the northward velocity
+        between T-cells ``(j-1, i)`` and ``(j, i)``.
+
+        - **Southern boundary**: ``j=1`` — face between exterior row 0 and
+          the first interior row 1.  Positive v-vel = northward = into domain.
+          Use the default ``sign=+1``.
+        - **Northern boundary**: ``j=grid.sizes["y"] - 1`` — face between the
+          last interior row and the exterior.  Positive v-vel = northward =
+          out of domain.  Pass ``sign=-1`` to adopt "positive = into domain".
+
+    sign : float
+        Applied to the velocity before integration.  ``+1`` (default) when
+        positive v-vel means flow into the domain; ``-1`` to negate.
+
+    Returns
+    -------
+    xr.Dataset
+        ``volume`` (Sv), ``heat`` (TW), ``salt`` (kg s⁻¹), ``fw`` (Sv).
+        Sign: positive = into the domain when *sign* is set correctly.
+
+    Examples
+    --------
+    >>> jdm = grid.sizes["y"]
+    >>> tr_s = xhycom.boundary_transport(ds, grid, bathy, j=1)
+    >>> tr_n = xhycom.boundary_transport(ds, grid, bathy, j=jdm - 1, sign=-1)
+    """
+    grid_ds = _load_grid(grid)
+    bathy_ds = _load_grid(bathy)
+
+    # Interior T-cell row (ocean side of the V-face).
+    # V-face j is between T(j-1) and T(j).
+    # Southern boundary (sign > 0): T(j-1)=exterior, T(j)=interior → j_int = j
+    # Northern boundary (sign < 0): T(j-1)=interior, T(j)=exterior → j_int = j-1
+    j_int = j if sign >= 0 else j - 1
+
+    if s_var is None:
+        for _name in ("salin", "saln", "so", "salinity", "sal"):
+            if _name in ds:
+                s_var = _name
+                break
+
+    thk = _thknss_m(ds, thknss_var)
+    wet = xr.DataArray(np.isfinite(bathy_ds["depth"].isel(y=j_int).values), dims=["x"])
+    scvx = xr.DataArray(grid_ds["scvx"].isel(y=j).values, dims=["x"])
+
+    v_vel = ds["v-vel."].isel(y=j)  # (…, k, x): northward velocity at V-face j
+    thk_i = thk.isel(y=j_int)  # interior T-cell layer thicknesses
+
+    # Signed cross-boundary volume flux [m³ s⁻¹ per column per layer]
+    flux = (sign * v_vel * thk_i * scvx).where(wet)
+
+    dims = [k_dim, "x"]
+    out: dict[str, xr.DataArray] = {
+        "volume": _attach_attrs(flux.sum(dim=dims) * 1e-6, "volume transport", "Sv"),
+    }
+
+    if t_var in ds:
+        temp = ds[t_var].isel(y=j_int)
+        out["heat"] = _attach_attrs(
+            (flux * (temp - t_ref)).sum(dim=dims) * rho0 * cp * 1e-12,
+            "heat transport",
+            "TW",
+        )
+
+    if s_var is not None and s_var in ds:
+        sal = ds[s_var].isel(y=j_int)
+        out["salt"] = _attach_attrs(
+            (flux * sal).sum(dim=dims) * rho0 / 1000.0,
+            "salt transport",
+            "kg s-1",
+        )
+        out["fw"] = _attach_attrs(
+            (flux * (s_ref - sal) / s_ref).sum(dim=dims) * 1e-6,
+            "freshwater transport",
+            "Sv",
+        )
+
+    return xr.Dataset(out)
+
+
+# ---------------------------------------------------------------------------
 # Section data extraction
 # ---------------------------------------------------------------------------
 
@@ -633,8 +786,6 @@ def section_data(
 
     y_dim = resolved.y_dim
     x_dim = resolved.x_dim
-    j = xr.DataArray(resolved.j, dims="section")
-    i = xr.DataArray(resolved.i, dims="section")
 
     sel_vars = (
         variables
@@ -642,7 +793,36 @@ def section_data(
         else [v for v in ds.data_vars if y_dim in ds[v].dims and x_dim in ds[v].dims]
     )
 
-    out = xr.Dataset({v: ds[v].isel({y_dim: j, x_dim: i}) for v in sel_vars if v in ds})
+    # For regular (1-D coordinate) grids — e.g. HYCOM regridded to GLORYS — the
+    # stored integer indices j/i were computed against the dataset that was passed
+    # to resolve().  If ds is a spatial subset of that dataset (as when regrid()
+    # trims the target to the source bounding box), the positional offsets are
+    # wrong.  Use label-based selection on the coordinate values instead: the
+    # actual lat/lon of each T-cell is stored in cell_lat/cell_lon and is
+    # unambiguous regardless of which subset of the grid ds covers.
+    if y_dim in ds.coords and ds[y_dim].ndim == 1:
+        lat_idx = xr.DataArray(resolved.cell_lat, dims="section")
+        lon_idx = xr.DataArray(resolved.cell_lon, dims="section")
+        out = xr.Dataset(
+            {
+                v: ds[v].sel({y_dim: lat_idx, x_dim: lon_idx}, method="nearest")
+                for v in sel_vars
+                if v in ds
+            }
+        )
+    else:
+        j = xr.DataArray(resolved.j, dims="section")
+        i = xr.DataArray(resolved.i, dims="section")
+        out = xr.Dataset(
+            {v: ds[v].isel({y_dim: j, x_dim: i}) for v in sel_vars if v in ds}
+        )
+    # Normalise dim order: section must be last so section_plot sees (k, section).
+    # Datasets where horizontal dims precede vertical (e.g. regridded on depth levels)
+    # otherwise come out (section, depth) instead of (depth, section).
+    for v in list(out.data_vars):
+        da = out[v]
+        if "section" in da.dims and da.dims[-1] != "section":
+            out[v] = da.transpose(..., "section")
     out = out.assign_coords(distance_km=("section", resolved.distance_km))
     out["distance_km"].attrs = {
         "long_name": "distance along section",
@@ -650,7 +830,10 @@ def section_data(
     }
 
     if thknss_var in ds:
-        thk = ds[thknss_var].isel({y_dim: j, x_dim: i})
+        if y_dim in ds.coords and ds[y_dim].ndim == 1:
+            thk = ds[thknss_var].sel({y_dim: lat_idx, x_dim: lon_idx}, method="nearest")
+        else:
+            thk = ds[thknss_var].isel({y_dim: j, x_dim: i})
         if thk.attrs.get("units") != "m":
             thk = thk / _ONEM
         depth_m = thk.cumsum(dim=k_dim) - thk / 2.0

@@ -271,6 +271,145 @@ class ResolvedTransect:
         """True when HYCOM C-grid face data is available for exact transport."""
         return self.face_type is not None
 
+    # ------------------------------------------------------------------
+    # Boundary factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_vface_row(
+        cls,
+        grid: xr.Dataset | str,
+        bathy: xr.Dataset | str,
+        j: int,
+        *,
+        sign: float = 1.0,
+        i_range: tuple[int, int] | None = None,
+        name: str | None = None,
+    ) -> ResolvedTransect:
+        """Create a ResolvedTransect from V-faces at a domain-boundary j-row.
+
+        Use this instead of ``Transect.from_boundary_row(...).resolve(grid)``
+        when you need cross-boundary transport.  The ``from_boundary_row``
+        path walks along a constant-j row, producing only U-faces (east-west
+        velocity) — the wrong component for cross-boundary (north-south) flux.
+        This method directly selects V-faces at row *j*, which carry v-vel.,
+        the component perpendicular to the boundary.
+
+        The face thickness (used by :func:`~xhycom.transport`) is taken from
+        the interior T-cell only, not averaged with the exterior land cell.
+
+        Parameters
+        ----------
+        grid : Dataset or str
+            HYCOM ``regional.grid`` Dataset or path.
+        bathy : Dataset or str
+            Bathymetry Dataset (opened with ``xhycom.open_dataset``) or path.
+            Wet columns are identified by finite depth at the interior T-cell.
+        j : int
+            V-face row index.  V-face at ``(j, i)`` lies between T ``(j-1, i)``
+            and T ``(j, i)``.  Typical values:
+
+            * Southern boundary: ``j=1``
+            * Northern boundary: ``j=grid.sizes["y"] - 1``
+        sign : float
+            Transport sign convention. ``+1`` when positive v-vel is directed
+            INTO the domain (use for the southern boundary, where northward
+            velocity enters the domain). ``-1`` when positive v-vel is directed
+            OUT OF the domain and you want positive transport to mean inflow
+            (use for the northern boundary, where northward velocity exits).
+        i_range : (int, int), optional
+            Column range ``(i_min, i_max)``, both inclusive.  Default: full row.
+        name : str, optional
+            Human-readable section label.
+
+        Returns
+        -------
+        ResolvedTransect
+            T-cell path at the interior row (for visualization / section_data)
+            and V-face data for exact transport via :func:`~xhycom.transport`.
+
+        Examples
+        --------
+        >>> jdm = grid.sizes["y"]
+        >>> southern = xhycom.ResolvedTransect.from_vface_row(
+        ...     grid, bathy, j=1, sign=+1, name="tp2_southern"
+        ... )
+        >>> northern = xhycom.ResolvedTransect.from_vface_row(
+        ...     grid, bathy, j=jdm - 1, sign=-1, name="tp2_northern"
+        ... )
+        >>> tr_south = xhycom.transport(ds, southern)
+        >>> tr_north = xhycom.transport(ds, northern)
+        """
+        grid_ds = _load_grid(grid)
+        bathy_ds = _load_grid(bathy)
+
+        plon: np.ndarray = grid_ds["plon"].values  # (jdm, idm)
+        plat: np.ndarray = grid_ds["plat"].values
+        scvx: np.ndarray = grid_ds["scvx"].values  # V-face east-west width (m)
+        _, idm = plon.shape
+
+        # Interior T-cell row: south of the V-face for sign>=0, north for sign<0.
+        # V-face at (j, i) is between T(j-1, i) and T(j, i).
+        #   Southern (sign≥0): interior ocean row = T(j, i)   → j_int = j
+        #   Northern (sign<0): interior ocean row = T(j-1, i) → j_int = j - 1
+        j_int: int = j if sign >= 0 else j - 1
+
+        # Wet columns identified by finite depth at the interior T-cell row
+        depth_row: np.ndarray = bathy_ds["depth"].values[j_int, :]
+        i_lo, i_hi = 0, idm - 1
+        if i_range is not None:
+            i_lo, i_hi = int(i_range[0]), int(i_range[1])
+
+        wet_idx = np.where(np.isfinite(depth_row[i_lo : i_hi + 1]))[0] + i_lo
+        if len(wet_idx) < 2:
+            raise ValueError(
+                f"Fewer than 2 wet columns at j_int={j_int}"
+                + (f", i_range={i_range}" if i_range is not None else "")
+                + ". Check j and i_range."
+            )
+
+        # T-cell path at the interior row (used for visualization and section_data)
+        cell_lons = plon[j_int, wet_idx]
+        cell_lats = plat[j_int, wet_idx]
+        dist_km = _cumulative_distance_km(cell_lons, cell_lats)
+        widths_km = _cell_widths_km(dist_km)
+        bearings = _section_bearings(cell_lons, cell_lats)
+        n = len(wet_idx)
+
+        # V-face data: one face per wet column.
+        # Both t1 and t2 point to j_int (the interior T-cell) so that the
+        # thickness / tracer average in transport() uses only interior values
+        # and never averages with the exterior land row.
+        wet_i = wet_idx.astype(np.intp)
+
+        # Dummy Transect for endpoint labelling in plot()
+        dummy = Transect(
+            lons=np.array([cell_lons[0], cell_lons[-1]]),
+            lats=np.array([cell_lats[0], cell_lats[-1]]),
+            name=name,
+        )
+
+        return cls(
+            transect=dummy,
+            j=np.full(n, j_int, dtype=np.intp),
+            i=wet_i,
+            cell_lon=cell_lons,
+            cell_lat=cell_lats,
+            distance_km=dist_km,
+            cell_width_km=widths_km,
+            bearing_deg=bearings,
+            face_type=np.full(n, _FACE_V, dtype=np.uint8),
+            face_j=np.full(n, j, dtype=np.intp),
+            face_i=wet_i.copy(),
+            face_sign=np.full(n, float(sign)),
+            face_t1_j=np.full(n, j_int, dtype=np.intp),
+            face_t1_i=wet_i.copy(),
+            face_t2_j=np.full(n, j_int, dtype=np.intp),
+            face_t2_i=wet_i.copy(),
+            face_width_m=scvx[j, wet_idx],
+            face_dist_km=dist_km,
+        )
+
     def plot(
         self,
         ax: matplotlib.axes.Axes | None = None,
@@ -658,6 +797,19 @@ class Transect:
         name: str | None = None,
     ) -> Transect:
         """Create a Transect from the wet cells along a single grid row.
+
+        .. deprecated::
+            For **transport** computation, use
+            :meth:`ResolvedTransect.from_vface_row` instead.  Resolving this
+            Transect via :meth:`resolve` walks the constant-j path eastward,
+            producing only U-faces (east-west velocity).  That measures the
+            along-boundary flux, not the cross-boundary (northward) flux.
+            :meth:`~ResolvedTransect.from_vface_row` selects V-faces directly
+            and plugs into :func:`~xhycom.transport` with the correct sign.
+
+        This factory is still useful for **visualisation** and for
+        :func:`~xhycom.section_data` (hydrographic sections along the boundary
+        row), where the T-cell path is the right representation.
 
         Intended for domain-boundary transects (e.g. TOPAZ open boundaries)
         where the outermost row lies entirely on land.  Pass the first interior
