@@ -61,11 +61,13 @@ from ._transect import ResolvedTransect, Transect, _load_grid
 # ---------------------------------------------------------------------------
 # NOTE on boundary-row transport
 # ---------------------------------------------------------------------------
-# ``Transect.from_boundary_row`` creates waypoints along the boundary at
-# constant j, then ``resolve(grid)`` walks west→east, producing U-faces
-# (east-west velocity).  For a south/north boundary we want V-faces
-# (cross-boundary velocity).  Use ``boundary_transport()`` instead of
-# ``transport()`` for boundary rows.
+# ``Transect.from_boundary_row`` places waypoints along the wet cells at
+# constant j.  When resolved, the hemisphere-mask approach correctly picks
+# V-faces (north-south velocity), but the faces it finds are one row
+# INTERIOR to the boundary — i.e. the face between row j and row j+1,
+# not the boundary face between the exterior land row (j=0 / j=jdm-1) and
+# the first wet row.  Use ``boundary_transport()`` instead, which calls
+# ``ResolvedTransect.from_vface_row`` to select the correct boundary faces.
 # ---------------------------------------------------------------------------
 
 # Pa per metre of water column: rho0 * g = 1000 * 9.806 (HYCOM's ``onem``)
@@ -134,8 +136,11 @@ def transport(
     k_dim:
         Vertical layer dimension name (HYCOM path only).
     z_dim:
-        Depth coordinate name for generic grids (e.g. ``"depth"``).  Required
-        when the resolved transect has no HYCOM face data.
+        Depth coordinate name.  Required when the resolved transect has no
+        HYCOM face data (T-point projection path).  Also accepted for
+        face-resolved HYCOM transects when ``thknss_var`` is absent (e.g.
+        after :func:`regrid_vertical`): layer thicknesses are then derived
+        from depth-level spacing and the face-exact C-grid path is used.
     s_ref:
         Freshwater reference salinity in PSU.  Default 34.8.
     t_ref:
@@ -276,6 +281,25 @@ def transport(
     # ------------------------------------------------------------------
     # HYCOM C-grid path
     # ------------------------------------------------------------------
+    # Layer thickness: from thknss if present, else derived from z_dim depth
+    # spacing (e.g. after regrid_vertical(), which drops thknss).
+    if thknss_var not in ds:
+        if z_dim is None or z_dim not in ds.coords:
+            raise ValueError(
+                f"{thknss_var!r} not found in dataset. "
+                "For HYCOM output on fixed depth levels (e.g. after "
+                "regrid_vertical), pass z_dim=<depth coord name> to derive "
+                "layer thicknesses from depth-level spacing."
+            )
+        z_vals = ds[z_dim].values.astype(float)
+        z_edges = np.empty(len(z_vals) + 1)
+        z_edges[1:-1] = (z_vals[:-1] + z_vals[1:]) / 2.0
+        z_edges[0] = z_vals[0] - (z_vals[1] - z_vals[0]) / 2.0
+        z_edges[-1] = z_vals[-1] + (z_vals[-1] - z_vals[-2]) / 2.0
+        dz = xr.DataArray(np.diff(z_edges), dims=[z_dim], attrs={"units": "m"})
+        ds = ds.assign({thknss_var: dz})
+        k_dim = z_dim
+
     for var in (u_var, v_var, thknss_var):
         if var not in ds:
             raise ValueError(f"Required variable {var!r} not found in dataset.")
@@ -494,9 +518,11 @@ def _face_volume_flux(
 
     vel = ds[vel_var].isel(y=fj, x=fi)  # (…, k, fd)
     thk = _thknss_m(ds, thknss_var)
-    thk1 = thk.isel(y=t1j, x=t1i)  # (…, k, fd)
-    thk2 = thk.isel(y=t2j, x=t2i)
-    thk_face = 0.5 * (thk1 + thk2)
+    # thk is (y, x, k) for native HYCOM or (k,) when derived from depth spacing
+    if "y" in thk.dims:
+        thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
+    else:
+        thk_face = thk  # uniform across (y, x), no spatial indexing needed
 
     flux = sgn * vel * thk_face * w  # (…, k, fd)
 
@@ -533,7 +559,10 @@ def _face_tracer_flux(
 
     vel = ds[vel_var].isel(y=fj, x=fi)
     thk = _thknss_m(ds, thknss_var)
-    thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
+    if "y" in thk.dims:
+        thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
+    else:
+        thk_face = thk
 
     tr1 = ds[tracer_var].isel(y=t1j, x=t1i)
     tr2 = ds[tracer_var].isel(y=t2j, x=t2i)

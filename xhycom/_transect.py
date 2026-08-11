@@ -166,6 +166,178 @@ def _section_bearings(lons: np.ndarray, lats: np.ndarray) -> np.ndarray:
     return b
 
 
+def _faces_from_waypoints(
+    plon: np.ndarray,
+    plat: np.ndarray,
+    scuy: np.ndarray,
+    scvx: np.ndarray,
+    wp_lons: np.ndarray,
+    wp_lats: np.ndarray,
+) -> tuple[
+    list[int],
+    list[int],
+    list[int],
+    list[float],
+    list[int],
+    list[int],
+    list[int],
+    list[int],
+    list[float],
+    list[float],
+]:
+    """Identify C-grid faces crossed by a section via hemisphere mask.
+
+    This is the MSCPROGS method (Liseter 2008): for each waypoint-pair segment
+    the grid is divided into two hemispheres by the great-circle plane through
+    the endpoints.  A vectorised telescopic sum of the resulting Boolean mask
+    produces ±1 flags at the U- and V-faces that lie on the segment boundary.
+    This correctly identifies V-faces (north-south velocity) for east-west
+    segments and U-faces (east-west velocity) for north-south segments — the
+    T-cell-step approach used previously produced the wrong face type for
+    axis-aligned segments.
+
+    Sign convention: positive flag when the face's positive-normal direction
+    (+i for U, +j for V) points to the right-hand side of the section (i.e.
+    flow in that direction contributes positively to the transport, matching
+    xhycom's "rightward when walking from first to last waypoint" convention).
+    """
+    jdm, idm = plon.shape
+    xyz_all = _to_xyz(plon.ravel(), plat.ravel()).reshape(jdm, idm, 3)
+
+    ftype_l: list[int] = []
+    fj_l: list[int] = []
+    fi_l: list[int] = []
+    fsign_l: list[float] = []
+    ft1j_l: list[int] = []
+    ft1i_l: list[int] = []
+    ft2j_l: list[int] = []
+    ft2i_l: list[int] = []
+    fwidth_l: list[float] = []
+    fdist_l: list[float] = []
+
+    cumdist = 0.0
+    for seg in range(len(wp_lons) - 1):
+        lon1, lat1 = float(wp_lons[seg]), float(wp_lats[seg])
+        lon2, lat2 = float(wp_lons[seg + 1]), float(wp_lats[seg + 1])
+
+        rvec1 = _to_xyz(np.array([lon1]), np.array([lat1]))[0]  # (3,)
+        rvec2 = _to_xyz(np.array([lon2]), np.array([lat2]))[0]
+        nvec = np.cross(rvec1, rvec2)  # normal to section great-circle plane
+
+        # Pure hemisphere dot products — used later to filter extent-boundary faces.
+        # A cell's dot product with nvec < 0 means it's on the right-hand side of
+        # the section (the "masked" side). We keep only faces where the unmasked
+        # T-cell is genuinely on the other side (dot ≥ 0), not merely excluded by
+        # the extent clip.
+        dot_hemi: np.ndarray = xyz_all @ nvec  # (jdm, idm), no clipping/zeroing
+
+        # Full mask: hemisphere AND extent AND not a domain boundary row/column.
+        mask: np.ndarray = dot_hemi < 0
+        cp1 = np.cross(rvec1, xyz_all)  # (jdm, idm, 3)
+        cp2 = np.cross(xyz_all, rvec2)
+        mask &= np.einsum("...k,...k->...", cp1, cp2) >= -1e-12
+        mask[[0, -1], :] = False
+        mask[:, [0, -1]] = False
+
+        mi = mask.astype(np.int8)
+
+        # Vectorised telescopic sum.
+        # flagu[j,i] = mi[j,i] - mi[j,i-1]  (west face of T[j,i], u-velocity)
+        # flagv[j,i] = mi[j,i] - mi[j-1,i]  (south face of T[j,i], v-velocity)
+        # Interior faces between two masked cells cancel; only boundary faces survive.
+        flagu = np.zeros((jdm, idm), dtype=np.int8)
+        flagu[:, 1:] = mi[:, 1:] - mi[:, :-1]
+        flagu[:, 0] = mi[:, 0]  # left boundary: mi[j, -1] = 0
+        flagu[:, -1] = 0  # right domain boundary (mirror MSCPROGS)
+
+        flagv = np.zeros((jdm, idm), dtype=np.int8)
+        flagv[1:, :] = mi[1:, :] - mi[:-1, :]
+        flagv[0, :] = mi[0, :]  # bottom boundary: mi[-1, i] = 0
+        flagv[-1, :] = 0  # top domain boundary (mirror MSCPROGS)
+
+        # Filter: discard extent-boundary faces.  A face is a true section face
+        # only when the unmasked T-cell is on the non-masked side of the great
+        # circle (dot_hemi ≥ 0).  Extent-boundary faces have the unmasked cell
+        # still on the masked side (dot_hemi < 0) — excluded only by the clip.
+        # U-face (j,i): T1=(j,i-1), T2=(j,i).
+        #   flagu>0 → T2 masked, T1 unmasked; keep if dot_hemi[T1] ≥ 0.
+        #   flagu<0 → T1 masked, T2 unmasked; keep if dot_hemi[T2] ≥ 0.
+        # V-face (j,i): T1=(j-1,i), T2=(j,i).
+        #   flagv>0 → T2 masked, T1 unmasked; keep if dot_hemi[T1] ≥ 0.
+        #   flagv<0 → T1 masked, T2 unmasked; keep if dot_hemi[T2] ≥ 0.
+
+        # --- U-faces (flagu ≠ 0): between T(j, i-1) and T(j, i) ---
+        uj, ui = np.where(flagu != 0)
+        if len(uj):
+            ui_m1 = np.maximum(ui.astype(np.intp) - 1, 0)
+            unmasked_dot_u = np.where(
+                flagu[uj, ui] > 0,
+                dot_hemi[uj, ui_m1],  # T1 unmasked
+                dot_hemi[uj, ui],  # T2 unmasked
+            )
+            keep_u = unmasked_dot_u >= 0
+            uj, ui, ui_m1 = uj[keep_u], ui[keep_u], ui_m1[keep_u]
+
+        if len(uj):
+            flon_u = 0.5 * (plon[uj, ui_m1] + plon[uj, ui])
+            flat_u = 0.5 * (plat[uj, ui_m1] + plat[uj, ui])
+            fdist_u = cumdist + _haversine_km(lon1, lat1, flon_u, flat_u)
+            for k in range(len(uj)):
+                ftype_l.append(int(_FACE_U))
+                fj_l.append(int(uj[k]))
+                fi_l.append(int(ui[k]))
+                fsign_l.append(float(flagu[uj[k], ui[k]]))
+                ft1j_l.append(int(uj[k]))
+                ft1i_l.append(int(ui_m1[k]))
+                ft2j_l.append(int(uj[k]))
+                ft2i_l.append(int(ui[k]))
+                fwidth_l.append(float(scuy[uj[k], ui[k]]))
+                fdist_l.append(float(fdist_u[k]))
+
+        # --- V-faces (flagv ≠ 0): between T(j-1, i) and T(j, i) ---
+        vj, vi = np.where(flagv != 0)
+        if len(vj):
+            vj_m1 = np.maximum(vj.astype(np.intp) - 1, 0)
+            unmasked_dot_v = np.where(
+                flagv[vj, vi] > 0,
+                dot_hemi[vj_m1, vi],  # T1 unmasked
+                dot_hemi[vj, vi],  # T2 unmasked
+            )
+            keep_v = unmasked_dot_v >= 0
+            vj, vi, vj_m1 = vj[keep_v], vi[keep_v], vj_m1[keep_v]
+
+        if len(vj):
+            flon_v = 0.5 * (plon[vj_m1, vi] + plon[vj, vi])
+            flat_v = 0.5 * (plat[vj_m1, vi] + plat[vj, vi])
+            fdist_v = cumdist + _haversine_km(lon1, lat1, flon_v, flat_v)
+            for k in range(len(vj)):
+                ftype_l.append(int(_FACE_V))
+                fj_l.append(int(vj[k]))
+                fi_l.append(int(vi[k]))
+                fsign_l.append(float(flagv[vj[k], vi[k]]))
+                ft1j_l.append(int(vj_m1[k]))
+                ft1i_l.append(int(vi[k]))
+                ft2j_l.append(int(vj[k]))
+                ft2i_l.append(int(vi[k]))
+                fwidth_l.append(float(scvx[vj[k], vi[k]]))
+                fdist_l.append(float(fdist_v[k]))
+
+        cumdist += _haversine_km(lon1, lat1, lon2, lat2)
+
+    return (
+        ftype_l,
+        fj_l,
+        fi_l,
+        fsign_l,
+        ft1j_l,
+        ft1i_l,
+        ft2j_l,
+        ft2i_l,
+        fwidth_l,
+        fdist_l,
+    )
+
+
 def _break_diagonals(
     j_cells: np.ndarray, i_cells: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -289,11 +461,12 @@ class ResolvedTransect:
         """Create a ResolvedTransect from V-faces at a domain-boundary j-row.
 
         Use this instead of ``Transect.from_boundary_row(...).resolve(grid)``
-        when you need cross-boundary transport.  The ``from_boundary_row``
-        path walks along a constant-j row, producing only U-faces (east-west
-        velocity) — the wrong component for cross-boundary (north-south) flux.
-        This method directly selects V-faces at row *j*, which carry v-vel.,
-        the component perpendicular to the boundary.
+        when you need cross-boundary transport at a domain boundary.
+        ``from_boundary_row(...).resolve()`` correctly identifies V-faces, but
+        finds the face between row *j* and *j+1* — one row interior to the
+        boundary.  This method directly selects V-faces at the specified row
+        *j*, i.e. the face between T(j-1, i) and T(j, i), which is the actual
+        boundary face for southern (j=1) and northern (j=jdm-1) boundaries.
 
         The face thickness (used by :func:`~xhycom.transport`) is taken from
         the interior T-cell only, not averaged with the exterior land cell.
@@ -559,7 +732,6 @@ class ResolvedTransect:
         # creating an L-bend.  Straight U→U or V→V runs have no shared corner.
         fx_all = fy_all = None
         corner_x = corner_y = np.empty(0)
-        mid_x = mid_y = np.empty(0)
         turn = np.zeros(max(self.n_faces - 1, 0), dtype=bool)
         all_cx = all_cy = np.zeros(len(turn))
 
@@ -600,21 +772,6 @@ class ResolvedTransect:
                 corner_x = all_cx[turn]
                 corner_y = all_cy[turn]
 
-                # Middle T-cells for straight runs (U→U or V→V): T-cell between faces.
-                # sign>0: dest=(fj,fi); sign<0,U: dest=(fj,fi-1); sign<0,V: dest=(fj-1,fi)
-                sgn = self.face_sign
-                dest_j = np.where(sgn > 0, fj_all, np.where(is_u, fj_all, fj_all - 1))
-                dest_i = np.where(sgn > 0, fi_all, np.where(is_u, fi_all - 1, fi_all))
-                not_turn = ~turn
-                mid_tj = dest_j[:-1][not_turn].astype(np.intp)
-                mid_ti = dest_i[:-1][not_turn].astype(np.intp)
-                if native:
-                    mid_x: np.ndarray = mid_ti.astype(float)
-                    mid_y: np.ndarray = mid_tj.astype(float)
-                else:
-                    mid_x = plon[mid_tj, mid_ti]
-                    mid_y = plat[mid_tj, mid_ti]
-
         # Build staircase: start T-cell → [face midpoint → corner? → face midpoint → …] → end T-cell
         if native:
             x0, y0 = float(self.i[0]), float(self.j[0])
@@ -644,8 +801,8 @@ class ResolvedTransect:
 
         if fx_all is not None:
             ax.scatter(
-                np.concatenate([fx_all, corner_x, mid_x]),
-                np.concatenate([fy_all, corner_y, mid_y]),
+                np.concatenate([fx_all, corner_x]),
+                np.concatenate([fy_all, corner_y]),
                 s=12,
                 marker="o",
                 color=color,
@@ -798,16 +955,17 @@ class Transect:
     ) -> Transect:
         """Create a Transect from the wet cells along a single grid row.
 
-        .. deprecated::
-            For **transport** computation, use
-            :meth:`ResolvedTransect.from_vface_row` instead.  Resolving this
-            Transect via :meth:`resolve` walks the constant-j path eastward,
-            producing only U-faces (east-west velocity).  That measures the
-            along-boundary flux, not the cross-boundary (northward) flux.
-            :meth:`~ResolvedTransect.from_vface_row` selects V-faces directly
-            and plugs into :func:`~xhycom.transport` with the correct sign.
+        .. note::
+            For **transport** computation at domain boundaries, use
+            :meth:`ResolvedTransect.from_vface_row` (or
+            :func:`~xhycom.boundary_transport`) instead.  Resolving this
+            Transect via :meth:`resolve` correctly identifies V-faces, but
+            locates them at the face between row *j* and row *j+1* — one row
+            interior to the boundary.  The actual boundary V-face (between
+            the exterior land row and the first wet row) is only accessible
+            via :meth:`~ResolvedTransect.from_vface_row`.
 
-        This factory is still useful for **visualisation** and for
+        This factory is useful for **visualisation** and for
         :func:`~xhycom.section_data` (hydrographic sections along the boundary
         row), where the T-cell path is the right representation.
 
@@ -922,13 +1080,18 @@ class Transect:
     ) -> ResolvedTransect:
         """Resolve the section against a model grid.
 
-        By default resolves against a HYCOM curvilinear grid, finding the
-        ordered T-cells the polyline passes through via a 3-D KDTree and
-        determining the exact U- and V-faces crossed.  Pass *lat_var* and
-        *lon_var* to resolve against any rectilinear or curvilinear dataset
-        (e.g. GLORYS); in this mode face data is not populated (so
-        :func:`~xhycom.section_flux_density` is unavailable, but
-        :func:`~xhycom.section_data` works as normal).
+        By default resolves against a HYCOM curvilinear grid using the
+        MSCPROGS hemisphere-mask algorithm: each waypoint-pair segment divides
+        the grid into two hemispheres; a vectorised telescopic sum of the
+        resulting Boolean mask identifies the exact U- and V-faces that cross
+        the great-circle boundary.  This correctly handles sections aligned
+        with constant grid rows or columns (e.g. boundary sections) as well as
+        sections that cross both a U-face and a V-face at the same corner node.
+
+        Pass *lat_var* and *lon_var* to resolve against any rectilinear or
+        curvilinear dataset (e.g. GLORYS); in this mode face data is not
+        populated (so :func:`~xhycom.section_flux_density` is unavailable,
+        but :func:`~xhycom.section_data` works as normal).
 
         Parameters
         ----------
@@ -1046,139 +1209,78 @@ class Transect:
         plat: np.ndarray = grid["plat"].values
         scuy: np.ndarray = grid["scuy"].values  # U-face width (y-direction)
         scvx: np.ndarray = grid["scvx"].values  # V-face width (x-direction)
-        jdm, idm = plon.shape
 
-        # Build KDTree in 3-D Cartesian so polar projections work correctly
-        tree = KDTree(_to_xyz(plon.ravel(), plat.ravel()))
+        # ------------------------------------------------------------------
+        # Face identification via hemisphere mask (MSCPROGS method).
+        # Faces and T-cell path both come from this single algorithm, so they
+        # are guaranteed consistent.  No KDTree or _break_diagonals needed.
+        # ------------------------------------------------------------------
+        (
+            ftype_l,
+            fj_l,
+            fi_l,
+            fsign_l,
+            ft1j_l,
+            ft1i_l,
+            ft2j_l,
+            ft2i_l,
+            fwidth_l,
+            fdist_l,
+        ) = _faces_from_waypoints(plon, plat, scuy, scvx, self.lons, self.lats)
 
-        # Densely sample the waypoint polyline and find nearest T-cell
-        slons, slats = _sample_polyline(self.lons, self.lats)
-        _, flat_idx = tree.query(_to_xyz(slons, slats))
-        j_samp = (flat_idx // idm).astype(np.intp)
-        i_samp = (flat_idx % idm).astype(np.intp)
-
-        # Deduplicate: keep only the first occurrence of each (j, i) pair
-        pairs = np.column_stack([j_samp, i_samp])
-        keep = np.concatenate([[True], np.any(pairs[1:] != pairs[:-1], axis=1)])
-        j_cells = j_samp[keep]
-        i_cells = i_samp[keep]
-
-        if len(j_cells) < 2:
+        if len(fj_l) < 2:
             raise ValueError(
-                "Transect intersects fewer than 2 T-cells — verify that the "
-                "waypoints lie within the model domain."
+                "Transect intersects fewer than 2 C-grid faces — verify that "
+                "the waypoints lie within the model domain."
             )
-
-        # Eliminate diagonal steps (Δj=±1 AND Δi=±1 simultaneously)
-        j_cells, i_cells = _break_diagonals(j_cells, i_cells)
-
-        # T-cell coordinates, cumulative distances, widths, bearings
-        cell_lons = plon[j_cells, i_cells]
-        cell_lats = plat[j_cells, i_cells]
-        dist_km = _cumulative_distance_km(cell_lons, cell_lats)
-        widths_km = _cell_widths_km(dist_km)
-        bearings = _section_bearings(cell_lons, cell_lats)
-
-        # ------------------------------------------------------------------
-        # Face identification
-        # Face sign convention: +1 when the section steps in the face's
-        # positive-normal direction (+i for U-faces, +j for V-faces), else -1.
-        # ------------------------------------------------------------------
-        face_type_list: list[int] = []
-        face_j_list: list[int] = []
-        face_i_list: list[int] = []
-        face_sign_list: list[float] = []
-        face_t1j_list: list[int] = []
-        face_t1i_list: list[int] = []
-        face_t2j_list: list[int] = []
-        face_t2i_list: list[int] = []
-        face_width_list: list[float] = []
-        face_dist_list: list[float] = []
-
-        for k in range(len(j_cells) - 1):
-            j1, i1 = int(j_cells[k]), int(i_cells[k])
-            j2, i2 = int(j_cells[k + 1]), int(i_cells[k + 1])
-            dj, di = j2 - j1, i2 - i1
-            mid_dist = (dist_km[k] + dist_km[k + 1]) / 2.0
-
-            if dj == 0 and di == 1:
-                # Step +i: U-face at (j1, i2), normal in +i  →  sign = +1
-                # Face is the western face of T(j1, i2), between T(j1,i1) and T(j1,i2)
-                face_type_list.append(int(_FACE_U))
-                face_j_list.append(j1)
-                face_i_list.append(i2)
-                face_sign_list.append(1.0)
-                face_t1j_list.append(j1)
-                face_t1i_list.append(i1)
-                face_t2j_list.append(j1)
-                face_t2i_list.append(i2)
-                face_width_list.append(float(scuy[j1, i2]))
-
-            elif dj == 0 and di == -1:
-                # Step -i: U-face at (j1, i1), normal in +i  →  sign = -1
-                face_type_list.append(int(_FACE_U))
-                face_j_list.append(j1)
-                face_i_list.append(i1)
-                face_sign_list.append(-1.0)
-                face_t1j_list.append(j1)
-                face_t1i_list.append(i1)
-                face_t2j_list.append(j1)
-                face_t2i_list.append(i2)
-                face_width_list.append(float(scuy[j1, i1]))
-
-            elif dj == 1 and di == 0:
-                # Step +j: V-face at (j2, i1), normal in +j  →  sign = +1
-                # Face is the southern face of T(j2, i1), between T(j1,i1) and T(j2,i1)
-                face_type_list.append(int(_FACE_V))
-                face_j_list.append(j2)
-                face_i_list.append(i1)
-                face_sign_list.append(1.0)
-                face_t1j_list.append(j1)
-                face_t1i_list.append(i1)
-                face_t2j_list.append(j2)
-                face_t2i_list.append(i1)
-                face_width_list.append(float(scvx[j2, i1]))
-
-            elif dj == -1 and di == 0:
-                # Step -j: V-face at (j1, i1), normal in +j  →  sign = -1
-                face_type_list.append(int(_FACE_V))
-                face_j_list.append(j1)
-                face_i_list.append(i1)
-                face_sign_list.append(-1.0)
-                face_t1j_list.append(j2)
-                face_t1i_list.append(i2)
-                face_t2j_list.append(j1)
-                face_t2i_list.append(i1)
-                face_width_list.append(float(scvx[j1, i1]))
-
-            else:
-                # Large jump (gap in domain or dense-sampling edge case) — skip
-                continue
-
-            face_dist_list.append(mid_dist)
 
         def _arr(lst: list, dtype: type = float) -> np.ndarray:
             return np.array(lst, dtype=dtype)
 
+        # Sort faces by distance along section
+        fdist_arr = np.asarray(fdist_l)
+        _sort = np.argsort(fdist_arr)
+
+        # T-cell path: unique pivot nodes (MSCPROGS ipiv, jpiv) from the
+        # sorted face positions.  A corner cell that produces both a U-face
+        # and a V-face appears twice in the face arrays but once in the path.
+        seen: dict[tuple[int, int], bool] = {}
+        path_j: list[int] = []
+        path_i: list[int] = []
+        for idx in _sort:
+            key = (int(fj_l[idx]), int(fi_l[idx]))
+            if key not in seen:
+                seen[key] = True
+                path_j.append(key[0])
+                path_i.append(key[1])
+
+        node_j = np.array(path_j, dtype=np.intp)
+        node_i = np.array(path_i, dtype=np.intp)
+        cell_lons = plon[node_j, node_i]
+        cell_lats = plat[node_j, node_i]
+        dist_km = _cumulative_distance_km(cell_lons, cell_lats)
+        widths_km = _cell_widths_km(dist_km)
+        bearings = _section_bearings(cell_lons, cell_lats)
+
         return ResolvedTransect(
             transect=self,
-            j=j_cells,
-            i=i_cells,
+            j=node_j,
+            i=node_i,
             cell_lon=cell_lons,
             cell_lat=cell_lats,
             distance_km=dist_km,
             cell_width_km=widths_km,
             bearing_deg=bearings,
-            face_type=_arr(face_type_list, np.uint8),
-            face_j=_arr(face_j_list, np.intp),
-            face_i=_arr(face_i_list, np.intp),
-            face_sign=_arr(face_sign_list, float),
-            face_t1_j=_arr(face_t1j_list, np.intp),
-            face_t1_i=_arr(face_t1i_list, np.intp),
-            face_t2_j=_arr(face_t2j_list, np.intp),
-            face_t2_i=_arr(face_t2i_list, np.intp),
-            face_width_m=_arr(face_width_list, float),
-            face_dist_km=_arr(face_dist_list, float),
+            face_type=_arr(ftype_l, np.uint8)[_sort],
+            face_j=_arr(fj_l, np.intp)[_sort],
+            face_i=_arr(fi_l, np.intp)[_sort],
+            face_sign=_arr(fsign_l, float)[_sort],
+            face_t1_j=_arr(ft1j_l, np.intp)[_sort],
+            face_t1_i=_arr(ft1i_l, np.intp)[_sort],
+            face_t2_j=_arr(ft2j_l, np.intp)[_sort],
+            face_t2_i=_arr(ft2i_l, np.intp)[_sort],
+            face_width_m=_arr(fwidth_l, float)[_sort],
+            face_dist_km=fdist_arr[_sort],
         )
 
     # ------------------------------------------------------------------
