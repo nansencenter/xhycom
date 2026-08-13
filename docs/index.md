@@ -3,7 +3,8 @@
 **xhycom** is a Python package for working with HYCOM model output:
 
 - Reads HYCOM `.a/.b` output directly into a labelled [xarray](why-xarray) Dataset, with coordinates, units, and a decoded time axis attached automatically
-- Regrid between HYCOM's native curvilinear grid and regular lon/lat/depth grids (and back), for comparison with reanalyses like GLORYS
+- Regrids between HYCOM's native curvilinear grid and regular lon/lat/depth grids (and back), for comparison with reanalyses like GLORYS
+- Computes volume, heat, salt, and freshwater transports across pre-defined or customized transects, and plots cross-sections
 - More HYCOM diagnostics coming
 
 ## Why xhycom?
@@ -63,6 +64,38 @@ For NERSC-HYCOM-CICE users, this replaces [`hyc2proj`](https://github.com/nansen
 
 The inverse direction is also supported: `xhycom.regrid_to_hycom` interpolates a regular lon/lat product (such as GLORYS) onto HYCOM's native curvilinear grid, for direct comparison in the model's own space.
 
+### Computing transports and plotting cross-sections
+
+xhycom can compute volume, heat, salt, and freshwater transport through any section defined by a list of waypoints, and produce filled-colour cross-section plots, all from a Jupyter notebook without leaving Python:
+
+```python
+# Define a section by waypoints and resolve it on the HYCOM C-grid
+transect = xhycom.Transect(lons=[-20, 10], lats=[65, 65], name="nordic_seas")
+sec = transect.resolve(ds, grid)
+
+# Volume, heat, salt and freshwater transport in one call
+tr = xhycom.transport(ds, sec)   # tr["volume"] in Sv, tr["heat"] in TW, …
+
+# Filled-colour cross-section plot (distance × depth)
+sec_data = xhycom.section_data(ds, sec, "temp")
+xhycom.section_plot(sec_data, "temp", depth_max=1000, cmap="thermal")
+```
+
+The same workflow applies to a GLORYS reanalysis on its regular grid, and to the open boundaries of the model domain — useful for verifying that HYCOM and GLORYS transports balance across the same boundaries.
+
+The volume transport calculation is a Python re-implementation of the approach used by [`m2transport` (MSCPROGS)](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Section), integrating velocity × layer thickness directly at C-grid cell faces with no interpolation. MSCPROGS can also compute heat and salt transports, but requires recompiling with a `SCALAR_TRANS` flag and a `scalartransport.in` file where you manually supply the reference temperature, reference salinity, and `cp × ρ`. Freshwater transport and GLORYS / open-boundary transports have no MSCPROGS equivalent.
+
+|                                    | [`m2transport` (MSCPROGS)](https://github.com/nansencenter/NERSC-HYCOM-CICE/tree/develop/hycom/MSCPROGS/src/Section) | xhycom                               |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Volume transport (HYCOM C-grid)    | yes                                                                                                                 | yes                                  |
+| Heat transport                     | yes (compile flag; manual reference T and `cp × ρ`)                                                                | yes (built-in)    |
+| Salt transport                     | yes (compile flag; `scalartransport.in`)                                                                            | yes                                  |
+| Freshwater transport               | via salinity offset (manual)                                                                                        | yes (built-in)                 |
+| Section plots                      | yes (Fortran → NetCDF → MATLAB)                                                                                     | yes (end-to-end Python)             |
+| GLORYS transport                   | no                                                                                                                  | yes                                  |
+| Open-boundary transport            | no                                                                                                                  | yes (`tp2_sections`, `tp5_sections`) |
+| Interface                          | compile binary, edit text input files                                                                               | Python / Jupyter                     |
+
 ## Getting started
 
 ::::{grid} 1 2 2 2
@@ -118,6 +151,33 @@ Slice, select, and visualize HYCOM fields with xarray.
 {octicon}`globe;2em;sd-text-primary`
 
 Remap onto a regular lon/lat/depth grid for reanalysis comparisons.
+:::
+
+:::{grid-item-card} Transects and transport
+:link: transects_transports
+:link-type: doc
+
+{octicon}`milestone;2em;sd-text-primary`
+
+Define sections, resolve them on the HYCOM C-grid, and compute volume, heat, salt, and freshwater transports.
+:::
+
+:::{grid-item-card} Comparing with GLORYS
+:link: comparison_transects_transports
+:link-type: doc
+
+{octicon}`git-compare;2em;sd-text-primary`
+
+Compare HYCOM transports and hydrographic sections against GLORYS reanalysis using three regridding strategies.
+:::
+
+:::{grid-item-card} Boundary transport verification
+:link: boundaries
+:link-type: doc
+
+{octicon}`sign-in;2em;sd-text-primary`
+
+Verify HYCOM and GLORYS volume transports through the open boundaries of the Arctic domain on their respective native grids.
 :::
 
 :::{grid-item-card} Time averaging
@@ -192,6 +252,9 @@ quickstart.ipynb
 lazy-loading.ipynb
 analysis.ipynb
 regridding.ipynb
+transects_transports.ipynb
+comparison_transects_transports.ipynb
+boundaries.ipynb
 time-averaging.ipynb
 big-computations.ipynb
 why-xarray
