@@ -8,6 +8,14 @@
 
 ### 🐛 Bug Fixes
 
+### 📚 Documentation
+
+### 🔧 Internal
+
+## v0.1.1 (August 3, 2026)
+
+### 🐛 Bug Fixes
+
 * Fix xgcm-related bug and pin xgcm ([#14](https://github.com/nansencenter/xhycom/pull/14))
 
 ### 📚 Documentation
@@ -18,6 +26,7 @@
 
 * Proper PyPI publishing ([#13](https://github.com/nansencenter/xhycom/pull/13))
 * Make codecov not block PRs ([#15](https://github.com/nansencenter/xhycom/pull/15))
+* Switch to dynamic versioning via setuptools-scm ([#17](https://github.com/nansencenter/xhycom/pull/17))
 
 ## v0.1.0 (July 9, 2026)
 
