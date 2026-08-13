@@ -14,6 +14,7 @@ from typing import Iterable, Union
 import xarray as xr
 
 from ._abfile import ABFile
+from ._boundaries import DomainSections, TP2Sections, tp2_sections, tp5_sections
 from ._discovery import find_archv_files
 from ._postprocess import postprocess
 from ._reader import (
@@ -47,7 +48,9 @@ _postprocess_ds = postprocess
 
 __version__ = "0.1.0"
 __all__ = [
+    "DomainSections",
     "ResolvedTransect",
+    "TP2Sections",
     "Transect",
     "boundary_transport",
     "open_dataset",
@@ -61,6 +64,8 @@ __all__ = [
     "section_data",
     "section_flux_density",
     "section_plot",
+    "tp2_sections",
+    "tp5_sections",
     "transport",
     "velocities_east_north",
 ]
