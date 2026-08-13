@@ -138,6 +138,15 @@ Define sections, resolve them on the HYCOM C-grid, and compute volume, heat, sal
 Compare HYCOM transports and hydrographic sections against GLORYS reanalysis using three regridding strategies.
 :::
 
+:::{grid-item-card} Boundary transport verification
+:link: boundaries
+:link-type: doc
+
+{octicon}`sign-in;2em;sd-text-primary`
+
+Verify HYCOM and GLORYS volume transports through the open boundaries of the Arctic domain on their respective native grids.
+:::
+
 :::{grid-item-card} Time averaging
 :link: time-averaging
 :link-type: doc
@@ -213,6 +222,7 @@ regridding.ipynb
 time-averaging.ipynb
 transects_transports.ipynb
 comparison_transects_transports.ipynb
+boundaries.ipynb
 big-computations.ipynb
 why-xarray
 api
