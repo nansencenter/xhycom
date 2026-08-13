@@ -263,14 +263,14 @@ def test_regrid_to_glorys_target(real_ds, glorys):
     pytest.importorskip("xgcm")
     ds, grid = real_ds
     out = xhycom.regrid(ds, target=glorys, grid=grid)  # conservative default
-    # lands exactly on the GLORYS lon/lat/depth grid
-    assert set(out["temp"].dims) == {"time", "depth", "lat", "lon"}
-    np.testing.assert_array_equal(out["lon"].values, glorys["longitude"].values)
-    np.testing.assert_array_equal(out["lat"].values, glorys["latitude"].values)
+    # dims match GLORYS native names (latitude/longitude, not lat/lon)
+    assert set(out["temp"].dims) == {"time", "depth", "latitude", "longitude"}
+    np.testing.assert_array_equal(out["longitude"].values, glorys["longitude"].values)
+    np.testing.assert_array_equal(out["latitude"].values, glorys["latitude"].values)
     np.testing.assert_array_equal(out["depth"].values, glorys["depth"].values)
     # GLORYS land mask is applied: every land cell is NaN.
     land = glorys["mask"].values == 0
-    temp = out["temp"].isel(time=0).transpose("depth", "lat", "lon").values
+    temp = out["temp"].isel(time=0).transpose("depth", "latitude", "longitude").values
     assert np.all(np.isnan(temp[land]))
 
 
