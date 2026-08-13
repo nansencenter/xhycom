@@ -90,6 +90,17 @@ def _lonlat_names(tgt: xr.Dataset) -> tuple[str, str]:
     return lon, lat
 
 
+def _rename_to_target_dims(out: xr.Dataset, tgt: xr.Dataset) -> xr.Dataset:
+    """Rename lat/lon dims in *out* to match *tgt*'s dimension names."""
+    lon_name, lat_name = _lonlat_names(tgt)
+    rename = {}
+    if lat_name != "lat" and "lat" in out.dims:
+        rename["lat"] = lat_name
+    if lon_name != "lon" and "lon" in out.dims:
+        rename["lon"] = lon_name
+    return out.rename(rename) if rename else out
+
+
 def _subset_target(tgt: xr.Dataset, ds: xr.Dataset, pad: float = 1.0) -> xr.Dataset:
     """Trim a regular target grid to the source's lon/lat extent (plus *pad*).
 
@@ -260,10 +271,32 @@ def _apply_target_mask(
     xhycom's output names and re-homed onto *out*'s coordinates so alignment is
     exact.  When *surface_only* (horizontal-only output, which still has a layer
     dimension), the surface level of a 3-D mask is used.
+
+    When the target has no explicit ``mask`` variable (e.g. GLORYS), the mask
+    is derived from the non-NaN pattern of the first data variable: land cells
+    and below-seafloor depths carry NaN there.  This ensures that regridded
+    HYCOM fields are properly blanked below the local seafloor rather than
+    carrying numerically-leaked near-zero values from the conservative regrid.
     """
-    if "mask" not in tgt.variables:
+    if "mask" in tgt.variables:
+        mask = tgt["mask"].astype(bool)
+    elif tgt.data_vars:
+        # Derive land/bathymetry mask from data-variable NaN pattern.
+        # Prefer the first variable that has a depth dimension (for a 3-D mask
+        # that covers below-seafloor cells); fall back to the first variable
+        # overall (2-D land mask only, e.g. when the target has only surface
+        # fields like sea-surface height).
+        depth_names = {"depth", "z", "lev"}
+        depth_dim = next((d for d in tgt.dims if d in depth_names), None)
+        da = next(
+            (tgt[v] for v in tgt.data_vars if depth_dim and depth_dim in tgt[v].dims),
+            tgt[next(iter(tgt.data_vars))],
+        )
+        if "time" in da.dims:
+            da = da.isel(time=0, drop=True)
+        mask = da.notnull()
+    else:
         return out
-    mask = tgt["mask"].astype(bool)
     rename = {
         old: new
         for old, new in (("longitude", "lon"), ("latitude", "lat"), ("depth", "depth"))
@@ -517,10 +550,11 @@ def regrid_horizontal(
     Returns
     -------
     xr.Dataset
-        Dataset with 1-D ``lon`` / ``lat`` dimension coordinates, on dims
-        ``(time, k, lat, lon)`` for hybrid-layer input (``thknss`` retained for
-        a subsequent vertical step) or ``(time, depth, lat, lon)`` for
-        depth-level input.
+        Dataset with 1-D horizontal dimension coordinates matching the target
+        grid's names (``latitude``/``longitude`` for GLORYS-style targets,
+        ``lat``/``lon`` otherwise), on dims ``(time, k, lat, lon)`` for
+        hybrid-layer input (``thknss`` retained for a subsequent vertical step)
+        or ``(time, depth, lat, lon)`` for depth-level input.
     """
     try:
         import xesmf as xe
@@ -639,6 +673,8 @@ def regrid_horizontal(
         out = _apply_target_mask(out, tgt, surface_only=True)
     if nan_pole:
         out = _nan_pole(out)
+    if tgt is not None:
+        out = _rename_to_target_dims(out, tgt)
     return out
 
 
@@ -1300,4 +1336,6 @@ def regrid(
         ds = _apply_target_mask(ds, tgt, surface_only=False)
     if nan_pole:
         ds = _nan_pole(ds)
+    if tgt is not None:
+        ds = _rename_to_target_dims(ds, tgt)
     return ds

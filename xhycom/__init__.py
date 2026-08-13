@@ -14,6 +14,7 @@ from typing import Iterable, Union
 import xarray as xr
 
 from ._abfile import ABFile
+from ._boundaries import DomainSections, TP2Sections, tp2_sections, tp5_sections
 from ._discovery import find_archv_files
 from ._postprocess import postprocess
 from ._reader import (
@@ -32,6 +33,14 @@ from ._regrid import (
     regrid_vertical,
     velocities_east_north,
 )
+from ._section import section_plot
+from ._transect import ResolvedTransect, Transect
+from ._transport import (
+    boundary_transport,
+    section_data,
+    section_flux_density,
+    transport,
+)
 
 # Private alias so the public `postprocess` name can also be a keyword argument
 # on open_dataset / open_mfdataset without shadowing the function.
@@ -39,6 +48,11 @@ _postprocess_ds = postprocess
 
 __version__ = "0.1.0"
 __all__ = [
+    "DomainSections",
+    "ResolvedTransect",
+    "TP2Sections",
+    "Transect",
+    "boundary_transport",
     "open_dataset",
     "open_mfdataset",
     "postprocess",
@@ -47,6 +61,12 @@ __all__ = [
     "regrid_horizontal",
     "regrid_to_hycom",
     "regrid_vertical",
+    "section_data",
+    "section_flux_density",
+    "section_plot",
+    "tp2_sections",
+    "tp5_sections",
+    "transport",
     "velocities_east_north",
 ]
 

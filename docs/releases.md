@@ -6,6 +6,8 @@
 
 ### ✨ New Features
 
+* Transport calculations and cross-section plots ([#10](https://github.com/nansencenter/xhycom/pull/10))
+
 ### 🐛 Bug Fixes
 
 ### 📚 Documentation
