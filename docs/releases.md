@@ -10,6 +10,8 @@
 
 ### 📚 Documentation
 
+* Add conda and PyPI badges to README ([#20](https://github.com/nansencenter/xhycom/pull/20))
+
 ### 🔧 Internal
 
 ## v0.2.0 (August 13, 2026)
