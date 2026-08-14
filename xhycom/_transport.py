@@ -206,27 +206,41 @@ def transport(
                 if op not in _OPS:
                     raise ValueError(f"Unknown operator {op!r}. Use: {sorted(_OPS)}")
 
-        # For regular (1-D coordinate) grids use coordinate-value selection so the
+        # For regular (1-D lat/lon coordinate) grids use coordinate-value selection so the
         # result is correct even when ds is a spatial subset of the grid that was
         # originally passed to resolve() (e.g. HYCOM regridded to a clipped GLORYS).
-        if resolved.y_dim in ds.coords and ds[resolved.y_dim].ndim == 1:
+        # Guard: only treat the y dimension as a lat coordinate if cell_lat values
+        # actually fall within its range — otherwise (e.g. TOPAZ's stereographic y
+        # coordinate runs -55..55, not -90..90) fall back to integer isel().
+        _y_is_latlon = (
+            resolved.y_dim in ds.coords
+            and ds[resolved.y_dim].ndim == 1
+            and float(ds[resolved.y_dim].min()) <= float(np.min(resolved.cell_lat))
+            and float(np.max(resolved.cell_lat)) <= float(ds[resolved.y_dim].max())
+        )
+        if _y_is_latlon:
             _lat_idx = xr.DataArray(resolved.cell_lat, dims="section")
             _lon_idx = xr.DataArray(resolved.cell_lon, dims="section")
             sel = {resolved.y_dim: _lat_idx, resolved.x_dim: _lon_idx}
             _sel_kw: dict = {"method": "nearest"}
+            _use_isel = False
         else:
             j_da = xr.DataArray(resolved.j, dims="section")
             i_da = xr.DataArray(resolved.i, dims="section")
             sel = {resolved.y_dim: j_da, resolved.x_dim: i_da}
             _sel_kw = {}
+            _use_isel = True
+
+        def _select(da: xr.DataArray) -> xr.DataArray:
+            return da.isel(**sel) if _use_isel else da.sel(**sel, **_sel_kw)
 
         theta = np.radians(resolved.bearing_deg)
         cos_t = xr.DataArray(np.cos(theta), dims="section")
         sin_t = xr.DataArray(np.sin(theta), dims="section")
         w = xr.DataArray(resolved.cell_width_km * 1e3, dims="section")
 
-        u = ds[u_var].sel(**sel, **_sel_kw)
-        v = ds[v_var].sel(**sel, **_sel_kw)
+        u = _select(ds[u_var])
+        v = _select(ds[v_var])
         v_normal = u * cos_t - v * sin_t  # positive = rightward
 
         z_vals = ds[z_dim].values.astype(float)
@@ -239,7 +253,7 @@ def transport(
         if constraints:
             cmask: xr.DataArray | None = None
             for cvar, (op, threshold) in constraints.items():
-                val = ds[cvar].sel(**sel, **_sel_kw)
+                val = _select(ds[cvar])
                 cond: xr.DataArray = {
                     "lt": val < threshold,
                     "le": val <= threshold,
@@ -260,14 +274,14 @@ def transport(
             _tp_integrate(v_normal) * 1e-6, "volume transport", "Sv"
         )
         if compute_heat:
-            t = ds[t_var].sel(**sel, **_sel_kw)
+            t = _select(ds[t_var])
             out_vars["heat"] = _attach_attrs(
                 _tp_integrate((t - t_ref) * v_normal) * rho0 * cp * 1e-12,
                 "heat transport",
                 "TW",
             )
         if compute_salt:
-            s = ds[s_var].sel(**sel, **_sel_kw)
+            s = _select(ds[s_var])
             out_vars["salt"] = _attach_attrs(
                 _tp_integrate(s * v_normal) * rho0 / 1000.0, "salt transport", "kg s-1"
             )
