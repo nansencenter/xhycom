@@ -47,6 +47,13 @@ are not met.  This lets you separate, e.g., Atlantic Water inflow
 
     tr_aw  = xhycom.transport(ds, r, constraints={"temp": ("gt", 2.0)})
     tr_pw  = xhycom.transport(ds, r, constraints={"temp": ("le", 2.0)})
+
+Pass ``vel_sign`` to restrict the integration to faces with a positive
+or negative signed normal velocity.  Use this to separate inflow from
+outflow across a section::
+
+    tr_in  = xhycom.transport(ds, r, vel_sign="positive")
+    tr_out = xhycom.transport(ds, r, vel_sign="negative")
 """
 
 from __future__ import annotations
@@ -100,6 +107,7 @@ def transport(
     cp: float = _CP,
     constraints: dict[str, tuple[Literal["lt", "le", "gt", "ge", "eq"], float]]
     | None = None,
+    vel_sign: Literal["positive", "negative"] | None = None,
 ) -> xr.Dataset:
     """Compute section transports for HYCOM or any regular-grid dataset.
 
@@ -152,6 +160,15 @@ def transport(
     constraints:
         Optional ``{variable: (operator, threshold)}`` pairs that zero out
         contributions where the condition is not met.
+    vel_sign:
+        Restrict the integration to faces where the signed normal velocity is
+        positive (``"positive"``) or negative (``"negative"``).  Use this to
+        isolate inflow and outflow across a section::
+
+            tr_in  = xhycom.transport(ds, r, vel_sign="positive")
+            tr_out = xhycom.transport(ds, r, vel_sign="negative")
+
+        ``None`` (default) integrates all faces regardless of velocity sign.
 
     Returns
     -------
@@ -186,6 +203,11 @@ def transport(
             if _name in ds:
                 s_var = _name
                 break
+
+    if vel_sign is not None and vel_sign not in {"positive", "negative"}:
+        raise ValueError(
+            f"vel_sign must be 'positive', 'negative', or None, got {vel_sign!r}."
+        )
 
     # ------------------------------------------------------------------
     # Generic T-point path (non-HYCOM resolved transect)
@@ -249,6 +271,11 @@ def transport(
                 }[op]
                 cmask = cond if cmask is None else (cmask & cond)
             v_normal = v_normal.where(cmask, 0.0)
+
+        if vel_sign == "positive":
+            v_normal = v_normal.where(v_normal > 0, 0.0)
+        elif vel_sign == "negative":
+            v_normal = v_normal.where(v_normal < 0, 0.0)
 
         def _tp_integrate(da: xr.DataArray) -> xr.DataArray:
             return (da * dz * w).sum(dim=[z_dim, "section"])
@@ -328,10 +355,10 @@ def transport(
     out_vars: dict[str, xr.DataArray] = {}
 
     vol_u = _face_volume_flux(
-        ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, constraints
+        ds, resolved, u_mask, "uf", u_var, thknss_var, k_dim, constraints, vel_sign
     )
     vol_v = _face_volume_flux(
-        ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, constraints
+        ds, resolved, v_mask, "vf", v_var, thknss_var, k_dim, constraints, vel_sign
     )
 
     vol = vol_u + vol_v  # (time?,) in m³ s⁻¹
@@ -349,6 +376,7 @@ def transport(
             t_var,
             t_ref,
             constraints,
+            vel_sign=vel_sign,
         )
         heat_v = _face_tracer_flux(
             ds,
@@ -361,6 +389,7 @@ def transport(
             t_var,
             t_ref,
             constraints,
+            vel_sign=vel_sign,
         )
         heat = (heat_u + heat_v) * rho0 * cp  # W
         out_vars["heat"] = _attach_attrs(heat * 1e-12, "heat transport", "TW")
@@ -377,6 +406,7 @@ def transport(
             s_var,
             0.0,
             constraints,
+            vel_sign=vel_sign,
         )
         salt_v = _face_tracer_flux(
             ds,
@@ -389,6 +419,7 @@ def transport(
             s_var,
             0.0,
             constraints,
+            vel_sign=vel_sign,
         )
         # Salinity in PSU (g kg⁻¹): multiply by rho0 and convert PSU→kg/kg (÷1000)
         salt = (salt_u + salt_v) * rho0 / 1000.0  # kg s⁻¹
@@ -406,6 +437,7 @@ def transport(
             0.0,
             constraints,
             fw_sref=s_ref,
+            vel_sign=vel_sign,
         )
         fw_v = _face_tracer_flux(
             ds,
@@ -419,6 +451,7 @@ def transport(
             0.0,
             constraints,
             fw_sref=s_ref,
+            vel_sign=vel_sign,
         )
         fw = fw_u + fw_v  # m³ s⁻¹
         out_vars["fw"] = _attach_attrs(fw * 1e-6, "freshwater transport", "Sv")
@@ -509,6 +542,7 @@ def _face_volume_flux(
     thknss_var: str,
     k_dim: str,
     constraints: dict | None,
+    vel_sign: str | None = None,
 ) -> xr.DataArray:
     """Signed volume flux (m³ s⁻¹) summed over all layers and faces in *mask*."""
     if not mask.any():
@@ -531,6 +565,11 @@ def _face_volume_flux(
             _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0
         )
 
+    if vel_sign == "positive":
+        flux = flux.where(sgn * vel > 0, 0.0)
+    elif vel_sign == "negative":
+        flux = flux.where(sgn * vel < 0, 0.0)
+
     return flux.sum(dim=[k_dim, face_dim])
 
 
@@ -546,6 +585,7 @@ def _face_tracer_flux(
     tracer_ref: float,
     constraints: dict | None,
     fw_sref: float | None = None,
+    vel_sign: str | None = None,
 ) -> xr.DataArray:
     """Signed tracer-weighted volume flux (m³ s⁻¹ × tracer_units) summed over all layers/faces.
 
@@ -579,6 +619,11 @@ def _face_tracer_flux(
         flux = flux.where(
             _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, face_dim), 0.0
         )
+
+    if vel_sign == "positive":
+        flux = flux.where(sgn * vel > 0, 0.0)
+    elif vel_sign == "negative":
+        flux = flux.where(sgn * vel < 0, 0.0)
 
     return flux.sum(dim=[k_dim, face_dim])
 

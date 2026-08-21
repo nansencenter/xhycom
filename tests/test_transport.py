@@ -355,6 +355,55 @@ def test_transport_constraint_missing_var_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# transport — vel_sign (inflow / outflow)
+# ---------------------------------------------------------------------------
+
+
+def test_transport_vel_sign_positive_selects_inflow() -> None:
+    """vel_sign='positive' retains only positive-velocity faces."""
+    # All faces have u_val=+1 (inflow), so positive should equal unconstrained.
+    tr_all = transport(_make_ds(), _make_resolved())
+    tr_in = transport(_make_ds(), _make_resolved(), vel_sign="positive")
+    np.testing.assert_allclose(
+        tr_in["volume"].item(), tr_all["volume"].item(), rtol=1e-10
+    )
+
+
+def test_transport_vel_sign_negative_selects_outflow() -> None:
+    """vel_sign='negative' gives zero when all velocities are positive."""
+    tr_out = transport(_make_ds(), _make_resolved(), vel_sign="negative")
+    np.testing.assert_allclose(tr_out["volume"].item(), 0.0, atol=1e-15)
+
+
+def test_transport_vel_sign_positive_plus_negative_equals_net() -> None:
+    """Inflow + outflow sums to the net transport for mixed-sign velocity field."""
+    # Half faces at +1.0, half at -1.0: give faces 0,1 u=+U_VAL, faces 2,3 u=-U_VAL.
+    u_data = np.full((N_K, NY, NX), U_VAL)
+    u_data[:, 1, 3:5] = -U_VAL  # faces 2 and 3 are at face_i=3,4 → u-face at x=3,4
+    ds_mixed = xr.Dataset(
+        {
+            "u-vel.": (("k", "y", "x"), u_data),
+            "v-vel.": (("k", "y", "x"), np.zeros((N_K, NY, NX))),
+            "thknss": (("k", "y", "x"), np.full((N_K, NY, NX), THK_M), {"units": "m"}),
+            "temp": (("k", "y", "x"), np.full((N_K, NY, NX), TEMP_VAL)),
+            "salin": (("k", "y", "x"), np.full((N_K, NY, NX), SAL_VAL)),
+        }
+    )
+    tr_net = transport(ds_mixed, _make_resolved())
+    tr_in = transport(ds_mixed, _make_resolved(), vel_sign="positive")
+    tr_out = transport(ds_mixed, _make_resolved(), vel_sign="negative")
+    np.testing.assert_allclose(
+        (tr_in["volume"] + tr_out["volume"]).item(), tr_net["volume"].item(), rtol=1e-10
+    )
+
+
+def test_transport_vel_sign_invalid_raises() -> None:
+    """Invalid vel_sign value raises ValueError."""
+    with pytest.raises(ValueError, match="vel_sign"):
+        transport(_make_ds(), _make_resolved(), vel_sign="sideways")
+
+
+# ---------------------------------------------------------------------------
 # transport — output attributes
 # ---------------------------------------------------------------------------
 
