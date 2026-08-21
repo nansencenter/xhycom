@@ -6,6 +6,8 @@
 
 ### ✨ New Features
 
+* Option to compute in/outflow for transports ([#22](https://github.com/nansencenter/xhycom/pull/22))
+
 ### 🐛 Bug Fixes
 
 ### 📚 Documentation
