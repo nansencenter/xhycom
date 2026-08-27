@@ -2,30 +2,10 @@ name: hycom-analysis-env
 channels:
   - conda-forge
 dependencies:
-  # --- core ---
   - python=3.11
-  - numpy
-  - xarray
-  - cftime
-
-  # --- regridding ---
-  - xgcm>=0.10.1
-  - xesmf
-  - dask
-  - numba     # xgcm's Grid.transform needs this for method="conservative"
-  - scipy
-  - netcdf4   # opening GLORYS / writing regridded output to NetCDF
-
-  # --- jupyter ---
+  - xesmf          # conda-forge only; no PyPI wheels
   - jupyterlab
   - ipykernel
-
-  # --- testing ---
-  - pytest
-  - pytest-cov
-  - pre-commit
-
-  # --- local editable installs ---
   - pip
   - pip:
-      - -e ..         # install xhycom itself in editable mode
+      - -e "..[dev]"   # installs xhycom + all other dependencies via pyproject.toml
