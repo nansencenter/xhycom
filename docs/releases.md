@@ -10,6 +10,8 @@
 
 ### 🐛 Bug Fixes
 
+* Fix transport and regrid for non-lat/lon grids (e.g. stereographic) ([#21](https://github.com/nansencenter/xhycom/pull/21))
+
 ### 📚 Documentation
 
 ### 🔧 Internal
