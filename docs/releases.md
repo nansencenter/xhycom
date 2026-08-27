@@ -18,6 +18,8 @@
 
 ### 🔧 Internal
 
+* Clean up dependencies ([#27](https://github.com/nansencenter/xhycom/pull/27))
+
 ## v0.2.0 (August 13, 2026)
 
 ### ✨ New Features

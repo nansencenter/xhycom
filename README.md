@@ -13,6 +13,9 @@ xhycom reads HYCOM model output in the native `.ab` format directly into [xarray
 **conda** (recommended, includes [xESMF](https://xesmf.readthedocs.io) for horizontal regridding):
 
 ```bash
+
+conda create -n xhycom-env python=3.13
+conda activate xhycom-env
 conda install -c conda-forge xhycom
 ```
 

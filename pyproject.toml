@@ -13,6 +13,7 @@ requires-python = ">=3.8"
 dependencies = [
     "numpy",
     "xarray",
+    "scipy",
     "cftime",
     "matplotlib",
     "nc-time-axis",  # matplotlib cftime axis support for plotting HYCOM time coords
