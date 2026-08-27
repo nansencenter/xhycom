@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import warnings
 
 import numpy as np
 import xarray as xr
@@ -77,7 +78,7 @@ def _load_grid(grid: xr.Dataset | str | None) -> xr.Dataset | None:
 
 
 def _target_lonlat(tgt: xr.Dataset) -> tuple[np.ndarray, np.ndarray]:
-    """1-D target longitudes / latitudes from a grid Dataset."""
+    """Target longitudes / latitudes from a grid Dataset (1-D or 2-D)."""
     lon = tgt["longitude"] if "longitude" in tgt.variables else tgt["lon"]
     lat = tgt["latitude"] if "latitude" in tgt.variables else tgt["lat"]
     return np.asarray(lon.values), np.asarray(lat.values)
@@ -119,6 +120,10 @@ def _subset_target(tgt: xr.Dataset, ds: xr.Dataset, pad: float = 1.0) -> xr.Data
     longitude box rather than risk dropping covered cells.
     """
     lon_name, lat_name = _lonlat_names(tgt)
+    # Curvilinear targets (2-D lon/lat) are already regional; subsetting
+    # along 1-D dims using a 2-D boolean mask is ill-defined, so skip it.
+    if tgt[lon_name].ndim > 1:
+        return tgt
     tlon = np.asarray(tgt[lon_name].values)
     tlat = np.asarray(tgt[lat_name].values)
     slat = np.asarray(ds["lat"].values)
@@ -605,21 +610,39 @@ def regrid_horizontal(
 
     lon = np.asarray(lon)
     lat = np.asarray(lat)
-    target_ds = xr.Dataset({"lat": (["lat"], lat), "lon": (["lon"], lon)})
+    curvilinear = lon.ndim == 2
 
-    conservative = method.startswith("conservative")
-
-    # Conservative remapping needs cell corner bounds on both grids.
-    if conservative:
-        src = _add_source_bounds(src, grid)
-        # Latitude edges must stay within [-90, 90]: midpoint extrapolation of a
-        # target row sitting on the pole (e.g. GLORYS' top row at exactly 90 N)
-        # otherwise lands a cell corner past the pole — an invalid spherical
-        # coordinate.  Clamping caps that cell at the pole instead.
-        target_ds = target_ds.assign(
-            lon_b=("lon_b", _edges_1d(lon)),
-            lat_b=("lat_b", np.clip(_edges_1d(lat), -90.0, 90.0)),
-        )
+    if curvilinear:
+        # Curvilinear targets (e.g. a stereographic Arctic grid): 2-D lon/lat
+        # require a 2-D xESMF target dataset.  Conservative remapping is not
+        # supported for curvilinear targets (cell-corner bounds in geographic
+        # coordinates are non-trivial for projected grids), so fall back to
+        # bilinear with a warning.
+        if method.startswith("conservative"):
+            warnings.warn(
+                "Conservative regridding is not supported for curvilinear "
+                "targets (2-D lon/lat); falling back to 'bilinear'.",
+                UserWarning,
+                stacklevel=3,
+            )
+            method = "bilinear"
+        target_ds = xr.Dataset({"lat": (["y", "x"], lat), "lon": (["y", "x"], lon)})
+        conservative = False
+    else:
+        target_ds = xr.Dataset({"lat": (["lat"], lat), "lon": (["lon"], lon)})
+        conservative = method.startswith("conservative")
+        # Conservative remapping needs cell corner bounds on both grids.
+        if conservative:
+            src = _add_source_bounds(src, grid)
+            # Latitude edges must stay within [-90, 90]: midpoint extrapolation
+            # of a target row sitting on the pole (e.g. GLORYS' top row at
+            # exactly 90 N) otherwise lands a cell corner past the pole — an
+            # invalid spherical coordinate.  Clamping caps that cell at the
+            # pole instead.
+            target_ds = target_ds.assign(
+                lon_b=("lon_b", _edges_1d(lon)),
+                lat_b=("lat_b", np.clip(_edges_1d(lat), -90.0, 90.0)),
+            )
 
     # Thickness-weight layered fields for conservative remapping so the
     # volume-integrated content (field * layer thickness) is conserved: remap
@@ -664,10 +687,26 @@ def regrid_horizontal(
             out[v] = out[v] / denom
             out[v].attrs = layer_attrs[v]
 
-    out["lon"].attrs.setdefault("standard_name", "longitude")
-    out["lon"].attrs.setdefault("units", "degrees_east")
-    out["lat"].attrs.setdefault("standard_name", "latitude")
-    out["lat"].attrs.setdefault("units", "degrees_north")
+    if curvilinear:
+        # xESMF does not carry non-index geographic coords to the output;
+        # re-attach them using the target's coordinate names.
+        lon_cname, lat_cname = (
+            _lonlat_names(tgt) if tgt is not None else ("longitude", "latitude")
+        )
+        extra: dict = {
+            lon_cname: (("y", "x"), lon),
+            lat_cname: (("y", "x"), lat),
+        }
+        if tgt is not None:
+            for d in ("y", "x"):
+                if d in tgt.coords and d in out.dims:
+                    extra[d] = tgt[d]
+        out = out.assign_coords(extra)
+    else:
+        out["lon"].attrs.setdefault("standard_name", "longitude")
+        out["lon"].attrs.setdefault("units", "degrees_east")
+        out["lat"].attrs.setdefault("standard_name", "latitude")
+        out["lat"].attrs.setdefault("units", "degrees_north")
 
     if tgt is not None and apply_target_mask:
         out = _apply_target_mask(out, tgt, surface_only=True)
