@@ -3,6 +3,8 @@
 ## 🐍 conda (recommended)
 
 ```bash
+conda create -n xhycom-env python=3.13
+conda activate xhycom-env
 conda install -c conda-forge xhycom
 ```
 
