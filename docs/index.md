@@ -258,6 +258,7 @@ boundaries.ipynb
 time-averaging.ipynb
 big-computations.ipynb
 why-xarray
+zarr-files
 api
 contributing
 releases
