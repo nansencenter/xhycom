@@ -7,6 +7,7 @@
 ### ✨ New Features
 
 * Option to compute in/outflow for transports ([#22](https://github.com/nansencenter/xhycom/pull/22))
+* Option to read in surface files (archs). ([#18](https://github.com/nansencenter/xhycom/pull/18))
 
 ### 🐛 Bug Fixes
 

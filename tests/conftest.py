@@ -241,3 +241,39 @@ def ave_file(tmp_path) -> str:
     base = str(tmp_path / "EXPAVE_1991_01")
     _write_ave(base)
     return base
+
+
+# ---------------------------------------------------------------------------
+# Surface archive (archs)
+# ---------------------------------------------------------------------------
+def _write_archs(
+    base: str, idm: int = IDM, jdm: int = JDM, day: float = 40909.5
+) -> None:
+    """Write a synthetic archs.[ab] pair with two 2-D surface fields."""
+    srfhgt = np.full((jdm, idm), 9.806 * 0.3, dtype=">f4")  # ~0.3 m SSH
+    mldpth = np.full((jdm, idm), 50.0, dtype=">f4")
+    lines = [
+        "Synthetic HYCOM surface archive for tests\n",
+        "experiment line\n",
+        "comment line\n",
+        "comment line\n",
+        f"{20:6d}    'iversn' = hycom version number x10\n",
+        f"{18:6d}    'iexpt ' = experiment number x10\n",
+        f"{3:6d}    'yrflag' = days in year flag\n",
+        f"{idm:6d}    'idm   ' = longitudinal array size\n",
+        f"{jdm:6d}    'jdm   ' = latitudinal array size\n",
+        "field       time step  model day  k  dens        min              max\n",
+        f"{'srfhgt':<8s} = {12:7d} {day:11.3f} {1:3d} {0.0:7.3f} {float(srfhgt.min()):16.7e} {float(srfhgt.max()):16.7e}\n",
+        f"{'mldpth':<8s} = {12:7d} {day:11.3f} {1:3d} {0.0:7.3f} {float(mldpth.min()):16.7e} {float(mldpth.max()):16.7e}\n",
+    ]
+    with open(base + ".b", "w") as f:
+        f.writelines(lines)
+    _write_a(base + ".a", [srfhgt, mldpth])
+
+
+@pytest.fixture
+def archs_file(tmp_path) -> str:
+    """Write a single surface archive archs.2013_001_12.[ab]. Returns basename."""
+    base = str(tmp_path / "archs.2013_001_12")
+    _write_archs(base)
+    return base

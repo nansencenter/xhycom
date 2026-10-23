@@ -92,6 +92,27 @@ def test_open_mfdataset_lazy_chunks(archive_pair, grid_file):
 
 
 # ---------------------------------------------------------------------------
+# Surface archive (archs)
+# ---------------------------------------------------------------------------
+def test_archs_discovered_by_find_archv_files(archs_file):
+    import os
+
+    from xhycom._discovery import find_archv_files
+
+    found = find_archv_files(os.path.dirname(archs_file))
+    assert any("archs.2013_001_12" in f for f in found)
+
+
+def test_open_archs_dataset(archs_file, grid_file):
+    grid = xhycom.open_dataset(grid_file[0])
+    ds = xhycom.open_dataset(archs_file, grid=grid)
+    assert "srfhgt" in ds and "mldpth" in ds
+    # surface archive has no layer dimension — all fields are 2-D
+    assert ds["srfhgt"].dims == ("time", "y", "x")
+    assert ds["mldpth"].dims == ("time", "y", "x")
+
+
+# ---------------------------------------------------------------------------
 # postprocess threaded through the real read path
 # ---------------------------------------------------------------------------
 def test_postprocess_through_open_archive(archive_file, grid_file):
