@@ -12,6 +12,7 @@
 ### 🐛 Bug Fixes
 
 * Fix transport and regrid for non-lat/lon grids (e.g. stereographic) ([#21](https://github.com/nansencenter/xhycom/pull/21))
+* `transport` and `section_flux_density`: compute the layer thickness at a C-grid face as HYCOM's `dpu`/`dpv` (interface depths averaged across the face, clipped at the shallower bottom) instead of the plain average of the two cell thicknesses. The old average let deep layers carry flow through the walls of bottom steps. Transports through shallow or sloping sections change, by up to ~40% in narrow straits; recompute stored transports.
 
 ### 📚 Documentation
 

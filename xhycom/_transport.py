@@ -4,8 +4,10 @@
 through a :class:`~xhycom.Transect` that has been resolved against a HYCOM
 grid via :meth:`~xhycom.Transect.resolve`.  The calculation uses native
 ``u-vel.`` and ``v-vel.`` directly at the staggered U- and V-face locations —
-no rotation or interpolation to T-points is needed.  Layer thickness and
-tracer values are averaged from the two T-cells that straddle each face.
+no rotation or interpolation to T-points is needed.  Tracer values are
+averaged from the two T-cells that straddle each face.  Layer thickness at a
+face follows HYCOM's ``dpu``/``dpv``: interface depths are averaged across the
+face and clipped at the shallower of the two bottoms.
 
 :func:`section_data` extracts hydrographic fields (temperature, salinity, ...)
 along the T-cell path as a ``(section, k)`` Dataset suitable for
@@ -522,6 +524,40 @@ def _thknss_m(ds: xr.Dataset, var: str) -> xr.DataArray:
     return thk / _ONEM
 
 
+def _face_thickness(
+    thk: xr.DataArray,
+    k_dim: str,
+    t1j: xr.DataArray,
+    t1i: xr.DataArray,
+    t2j: xr.DataArray,
+    t2i: xr.DataArray,
+) -> xr.DataArray:
+    """Layer thickness [m] at C-grid faces, as HYCOM's ``dpu``/``dpv``.
+
+    The interface depths of the two T-cells are averaged across the face and
+    then clipped at the shallower of the two bottoms, so the face is a wall
+    below the shallower column.  This differs from the plain average of the
+    two cell thicknesses (used before), which gives a deep layer half its
+    thickness on a face where only one side reaches that depth.  On a
+    shelf-break face that lets deep-layer velocity carry flow through the
+    wall.
+
+    Thickness without horizontal dimensions (uniform z-levels, e.g. derived
+    from depth spacing after ``regrid_vertical``) is returned unchanged.
+    """
+    if "y" not in thk.dims:
+        return thk
+    thk = thk.fillna(0.0)
+    th1 = thk.isel(y=t1j, x=t1i)
+    th2 = thk.isel(y=t2j, x=t2i)
+    zb1 = th1.cumsum(dim=k_dim)  # bottom interface of each layer
+    zb2 = th2.cumsum(dim=k_dim)
+    h_face = np.minimum(zb1.isel({k_dim: -1}), zb2.isel({k_dim: -1}))
+    p_bot = np.minimum(h_face, 0.5 * (zb1 + zb2))
+    p_top = np.minimum(h_face, 0.5 * ((zb1 - th1) + (zb2 - th2)))
+    return p_bot - p_top
+
+
 def _face_arrays(
     resolved: ResolvedTransect,
     mask: np.ndarray,
@@ -567,10 +603,7 @@ def _face_volume_flux(
     vel = ds[vel_var].isel(y=fj, x=fi)  # (…, k, fd)
     thk = _thknss_m(ds, thknss_var)
     # thk is (y, x, k) for native HYCOM or (k,) when derived from depth spacing
-    if "y" in thk.dims:
-        thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
-    else:
-        thk_face = thk  # uniform across (y, x), no spatial indexing needed
+    thk_face = _face_thickness(thk, k_dim, t1j, t1i, t2j, t2i)
 
     flux = sgn * vel * thk_face * w  # (…, k, fd)
 
@@ -613,10 +646,7 @@ def _face_tracer_flux(
 
     vel = ds[vel_var].isel(y=fj, x=fi)
     thk = _thknss_m(ds, thknss_var)
-    if "y" in thk.dims:
-        thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
-    else:
-        thk_face = thk
+    thk_face = _face_thickness(thk, k_dim, t1j, t1i, t2j, t2i)
 
     tr1 = ds[tracer_var].isel(y=t1j, x=t1i)
     tr2 = ds[tracer_var].isel(y=t2j, x=t2i)
@@ -1061,7 +1091,7 @@ def section_flux_density(
             continue
         fj, fi, sgn, w, t1j, t1i, t2j, t2i = _face_arrays(resolved, mask, "face")
         vel = ds[vel_var].isel(y=fj, x=fi) * sgn  # (..., k, face)
-        thk_face = 0.5 * (thk.isel(y=t1j, x=t1i) + thk.isel(y=t2j, x=t2i))
+        thk_face = _face_thickness(thk, k_dim, t1j, t1i, t2j, t2i)
         fd = vel * thk_face  # m² s⁻¹
         if constraints:
             cmask = _constraint_mask(ds, constraints, t1j, t1i, t2j, t2i, "face")
