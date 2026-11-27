@@ -322,3 +322,63 @@ def test_horizontal_conservative_to_glorys_conserves_area_integral(real_ds, glor
     bil = area_mean("bilinear")
     # both estimate the same surface-temperature integral over the window
     np.testing.assert_allclose(cons, bil, rtol=0.05)
+
+
+# ---------------------------------------------------------------------------
+# Transport face thickness: volume closure
+# ---------------------------------------------------------------------------
+def _cell_divergence(tp0, clipped: bool):
+    """|horizontal divergence| of the depth-integrated volume flux [m3/s] per
+    wet interior cell, with the clipped (HYCOM dpu/dpv) or the plain averaged
+    face thickness.
+    """
+    from xhycom._transport import _face_thickness
+
+    g = xhycom.open_dataset(tp0.grid)
+    ds = xhycom.open_dataset(
+        tp0.archive,
+        grid=tp0.grid,
+        variables=["thknss", "u-vel.", "v-vel."],
+        postprocess=True,
+    ).isel(time=0)
+    thk = ds["thknss"].fillna(0.0)
+    u, v = ds["u-vel."].fillna(0.0), ds["v-vel."].fillna(0.0)
+    ny, nx = thk.sizes["y"], thk.sizes["x"]
+
+    def A(a):
+        return xr.DataArray(a, dims="f")
+
+    def dp(aj, ai, bj, bi):
+        if clipped:
+            return _face_thickness(thk, "k", A(aj), A(ai), A(bj), A(bi))
+        return 0.5 * (thk.isel(y=A(aj), x=A(ai)) + thk.isel(y=A(bj), x=A(bi)))
+
+    U, V = np.zeros((ny, nx)), np.zeros((ny, nx))
+    jj, ii = (
+        a.ravel()
+        for a in np.meshgrid(np.arange(1, ny - 1), np.arange(1, nx), indexing="ij")
+    )
+    U[jj, ii] = (u.isel(y=A(jj), x=A(ii)) * dp(jj, ii - 1, jj, ii)).sum(
+        "k"
+    ).values * g.scuy.values[jj, ii]
+    jj, ii = (
+        a.ravel()
+        for a in np.meshgrid(np.arange(1, ny), np.arange(1, nx - 1), indexing="ij")
+    )
+    V[jj, ii] = (v.isel(y=A(jj), x=A(ii)) * dp(jj - 1, ii, jj, ii)).sum(
+        "k"
+    ).values * g.scvx.values[jj, ii]
+    div = (U[1:-1, 2:] - U[1:-1, 1:-1]) + (V[2:, 1:-1] - V[1:-1, 1:-1])
+    wet = (thk.sum("k") > 0).values[1:-1, 1:-1]
+    return np.abs(div[wet])
+
+
+def test_face_thickness_closes_volume(tp0):
+    """With HYCOM's clipped face thickness the depth-integrated flux of a mean
+    archive is nearly non-divergent; the plain average leaks flow through the
+    walls of bottom steps (TP0 sample: p99 9e3 vs 1.2e7 m3/s).
+    """
+    new = _cell_divergence(tp0, clipped=True)
+    old = _cell_divergence(tp0, clipped=False)
+    assert np.percentile(new, 99) < 0.01 * np.percentile(old, 99)
+    assert np.median(new) < 0.01 * np.median(old)

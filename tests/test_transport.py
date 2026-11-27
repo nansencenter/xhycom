@@ -895,3 +895,81 @@ def test_section_data_generic_no_z_dim_no_depth_m() -> None:
     r = t.resolve(ds, lat_var="latitude", lon_var="longitude")
     sec = section_data(ds, r, variables=["thetao"])
     assert "depth_m" not in sec
+
+
+# ---------------------------------------------------------------------------
+# Face thickness at a bottom step (HYCOM dpu/dpv)
+# ---------------------------------------------------------------------------
+
+
+def _make_step_ds(n_shallow: int = 2) -> xr.Dataset:
+    """Like _make_ds, but the left T-cells (i=0..3) only have ``n_shallow``
+    layers (deeper layers have zero thickness); the right cells have all N_K.
+    The velocity is 1 m/s in every layer, including below the step.
+    """
+    ds = _make_ds()
+    thk = np.full((N_K, NY, NX), THK_M)
+    thk[n_shallow:, :, :N_FACES] = 0.0
+    ds["thknss"] = (("k", "y", "x"), thk, {"units": "m"})
+    return ds
+
+
+def test_face_thickness_clipped_at_shallower_bottom() -> None:
+    """At a bottom step the face is a wall below the shallower column: only the
+    layers that exist on both sides carry flow (the old plain average gave the
+    deep layer half its thickness, 25 m per face instead of 20 m).
+    """
+    tr = transport(_make_step_ds(n_shallow=2), _make_resolved())
+    expected = N_FACES * 2 * U_VAL * THK_M * WIDTH_M * 1e-6
+    np.testing.assert_allclose(tr["volume"].item(), expected, rtol=1e-10)
+
+
+def test_face_thickness_equal_columns_unchanged() -> None:
+    """With identical columns the clipped thickness equals the cell thickness."""
+    from xhycom._transport import _face_thickness
+
+    ds = _make_ds()
+    r = _make_resolved()
+    t1j = xr.DataArray(r.face_t1_j, dims="f")
+    t1i = xr.DataArray(r.face_t1_i, dims="f")
+    t2j = xr.DataArray(r.face_t2_j, dims="f")
+    t2i = xr.DataArray(r.face_t2_i, dims="f")
+    dpf = _face_thickness(ds["thknss"], "k", t1j, t1i, t2j, t2i)
+    np.testing.assert_allclose(dpf.values, THK_M)
+
+
+def test_face_thickness_offset_interfaces() -> None:
+    """Interfaces at different depths on the two sides are averaged, and the
+    face thicknesses sum to the shallower total depth.
+    """
+    from xhycom._transport import _face_thickness
+
+    thk = xr.DataArray(
+        np.array([[[5.0, 10.0]], [[15.0, 10.0]], [[0.0, 30.0]]]), dims=("k", "y", "x")
+    )  # left column: 5 + 15 = 20 m, right column: 10 + 10 + 30 = 50 m
+    one = xr.DataArray([0], dims="f")
+    dpf = _face_thickness(thk, "k", one * 0, one * 0, one * 0, one * 0 + 1)
+    # interfaces: left 5, 20; right 10, 20, 50 -> averaged 7.5, 20, 35 -> clipped at 20
+    np.testing.assert_allclose(dpf.isel(f=0).transpose("k").values, [7.5, 12.5, 0.0])
+    np.testing.assert_allclose(dpf.sum("k").item(), 20.0)
+
+
+def test_face_thickness_uniform_levels_unchanged() -> None:
+    """1-D thickness (z-levels without horizontal dims) passes through."""
+    from xhycom._transport import _face_thickness
+
+    dz = xr.DataArray([1.0, 2.0, 3.0], dims="depth")
+    one = xr.DataArray([0], dims="f")
+    out = _face_thickness(dz, "depth", one, one, one, one)
+    assert out is dz
+
+
+def test_section_flux_density_step_matches_transport() -> None:
+    """section_flux_density integrated over faces and layers equals transport
+    at a bottom step too (both use the clipped face thickness).
+    """
+    ds, r = _make_step_ds(), _make_resolved()
+    sfd = section_flux_density(ds, r)
+    tr = transport(ds, r)
+    total = float((sfd["flux_density"] * sfd["face_width_m"]).sum()) * 1e-6
+    np.testing.assert_allclose(total, tr["volume"].item(), rtol=1e-10)
